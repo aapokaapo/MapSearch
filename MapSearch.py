@@ -2,18 +2,19 @@ import os
 import codecs
 import asyncio
 import discord
-import imageio
 import random
+import config
 
-TOKEN = discord_token
-channel_id = discord_channel_id
+TOKEN = config.token
+channel_id = config.channel_id
 client = discord.Client()
 
 
+already_seen = []
+
 data = []
 
-paths = ["/home/user/paintball2/pball/maps/", "/home/user/paintball2/pball/maps/beta/",
-         "/home/user/paintball2/pball/maps/inprogress/"]
+paths = config.paths
 
 class MapData:
 	def __init__(self, name, message):
@@ -37,11 +38,28 @@ for path in paths:
                     if "message".lower() in line.lower():
                         data.append(MapData(filename[:-4], line))
                         break
+                    # if couldn't find message in bsp (mapper has not set worldspawn message)
+                    else:
+                        data.append(MapData(filename[:-4], "Not found"))
 # great! this should be snappier than opening and closing bunch of files
 print("Mapdata loaded to memory!")
+print(TOKEN)
 
 
-
+async def make_link(keyword):
+    with open('/var/www/html/mapdownload.html', 'w') as myfile:
+        html_str = """
+        <html>
+            <head>
+                <title>HTML Meta Tag</title>
+                    <meta http-equiv = "refresh" content = "2; url = ftp://otb-server.de/pub/Maps/{}.bsp" />
+            </head>
+            <body>
+                <p>Redirecting to ftp OTB</p>
+            </body>
+        </html>
+        """.format(keyword)
+        myfile.write(html_str)
 
 async def make_embed(keyword, maps=None, messages=None):
 	
@@ -62,7 +80,8 @@ async def make_embed(keyword, maps=None, messages=None):
             hit_messages += message.replace("\"", "") + " "
         embed.add_field(name="Results", value=hit_messages.replace("\\n", " "),
                         inline=False)
-        embed.add_field(name="Download", value="[CLICK HERE TO DOWNLOAD](ftp://otb-server.de/pub/Maps/{}.bsp)".format(keyword),
+        await make_link(keyword)
+        embed.add_field(name="Download", value="[CLICK HERE TO DOWNLOAD](http://whoa.gq/mapdownload.html)".format(keyword),
                         inline=False)
         embed.set_image(url="http://whoa.gq/mapshots/{}.jpg".format(keyword))
         
@@ -125,8 +144,14 @@ async def mapinfo(author, keyword):
 async def random_map():
 	
 	# choose a random map from maps dir
-    files = os.listdir(paths[0])
-    random_map = random.choice(files)[:-4]
+    while True:
+        files = os.listdir(paths[0])
+        if len(already_seen) == len(files):
+            already_seen.clear()
+        random_map = random.choice(files)[:-4]
+        if random_map not in already_seen:
+            already_seen.append(random_map)
+            break
     
     # create empty embed, edit it later
     messages = [] 
@@ -135,15 +160,21 @@ async def random_map():
     message = await channel.send(embed=embed) 
 
     # read the bsp for first message, then break
+    not_found = True
     with codecs.open("{0}{1}.bsp".format(paths[0], random_map), 'r', encoding='utf-8',
                              errors='ignore') as currentFile:
                 lines = currentFile.readlines()
                 for line in lines:
                     if "message".lower() in line.lower():
+                        not_found = False
                         messages.append(line.split(' ', 1)[-1])
                         embed = await make_embed(random_map, messages=messages)
                         await message.edit(embed=embed)
                         break
+                        
+    if not_found:
+        embed = await make_embed(random_map, messages=["Not found"])
+        await message.edit(embed=embed)
 
 
 
