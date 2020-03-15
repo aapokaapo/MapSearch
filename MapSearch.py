@@ -29,9 +29,7 @@ class MapData:
 
 def load_maps():
     map_memory.clear()
-    bsps = []
-    # default if no message is set in worldspawn
-    message = "Message not found"
+    bsps = [] 
     for filename in os.listdir(path):
         # if filename is dir, add it to path and search that too
         if os.path.isdir(path + filename):
@@ -43,7 +41,9 @@ def load_maps():
             if filename.endswith(".bsp"): # don't include txt, ent etc.
                 bsps.append(filename) # for maps in 'maps/'
        
-    for bsp in bsps: 
+    for bsp in bsps:
+        # default if no message is set in worldspawn
+        message = "Message not found"
         # open the map as text, ignore bits        
         with codecs.open(path + bsp, 'r', encoding='utf-8',
                                      errors='ignore') as myfile:
@@ -52,10 +52,11 @@ def load_maps():
                     for line in lines:
                         # search bsp for first message which is the worldspawn message (hopefully/usually)
                         if "message".lower() in line.lower():
-                            tmp= line.split(' ', 1)[-1] # strip quotation marks
+                            tmp = line.split(' ', 1)[-1] [1:-2] # strip quotation marks
+                            print(tmp)
                             message = tmp.replace("\\n", " ") # strip linebreaks
                             break
-        map_memory.append(MapData(bsp[:-4], message))
+        map_memory.append(MapData(bsp[:-4], message.strip('"')))
 # great! this should be snappier than opening and closing bunch of files
 print("Mapdata loaded to memory!")
 load_maps() # run on load
@@ -149,16 +150,17 @@ async def mapinfo(author, keyword):
     for map in map_memory:
         if map.name.lower() == keyword.lower():
             message = map.message
-        elif map.name.replace('beta/', ' ').lower() == keyword.lower():
+        elif map.name[5:].lower() == keyword.lower():
             message = map.message
         
     embed = await make_embed(keyword, message=message)
     await bot_message.edit(embed=embed)                    
         
         
-async def random_map():
-    # choose a random map from maps dir
+async def choose_random_map():
+    # choose a random map from maps dir, loop until get a map that is not already seen
     while True:
+        # start all over again, if every map on the list has been seen
         if len(already_seen) == len(map_memory):
             already_seen.clear()
         random_map = random.choice(map_memory)
@@ -166,7 +168,7 @@ async def random_map():
             already_seen.append(random_map)
             break
 
-    embed = await make_embed(random_map.name, random_map.message)
+    embed = await make_embed(random_map.name, message=random_map.message)
     channel = client.get_channel(channel_id)
     message = await channel.send(embed=embed) 
 
@@ -202,7 +204,7 @@ async def on_message(message):
                 asyncio.create_task(mapinfo(author, keyword))
             except IndexError:
                 await channel.send("You didn't give a keyword! Here's a random map")
-                asyncio.create_task(random_map())
+                asyncio.create_task(choose_random_map())
                 
         elif message.content.startswith("!reload"):
             await channel.send("Reloading maps! Please hold...")
