@@ -1,4 +1,4 @@
-paths = ["paintball2/pball/maps/",] (list of strings)
+paths = "paintball2/pball/maps/"
 
 channel_id = id(string)
 
