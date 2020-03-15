@@ -4,6 +4,7 @@ import asyncio
 import discord
 import random
 import config
+import imagetool
 
 TOKEN = config.token
 channel_id = config.channel_id
@@ -25,6 +26,7 @@ class MapData:
 # search the mapfiles for worldspawn message and load them to memory
 for path in paths:
     for filename in os.listdir(path):
+        not_found = True
         # skip directories
         if os.path.isdir(path + filename):
             pass
@@ -37,17 +39,19 @@ for path in paths:
                     # search bsp for first message which is the worldspawn message (hopefully/usually)
                     if "message".lower() in line.lower():
                         data.append(MapData(filename[:-4], line))
+                        not_found = False
                         break
                     # if couldn't find message in bsp (mapper has not set worldspawn message)
-                    else:
-                        data.append(MapData(filename[:-4], "Not found"))
+        if not_found:
+            data.append(MapData(filename[:-4], "Not found"))
+
 # great! this should be snappier than opening and closing bunch of files
 print("Mapdata loaded to memory!")
 print(TOKEN)
 
 
 async def make_link(keyword):
-    with open('/var/www/html/mapdownload.html', 'w') as myfile:
+    with open('/var/www/html/redirect/{}.html'.fomat(keyword), 'w') as myfile:
         html_str = """
         <html>
             <head>
@@ -72,8 +76,9 @@ async def make_embed(keyword, maps=None, messages=None):
                 hit_maps += map + " "
             embed.add_field(name="Results", value=hit_maps,
                             inline=False)
+            embed.set_image(url="http://whoa.gq/gridshots/{}-grid.jpg".format(keyword))
             # DirtyTaco add code here for mapshots in grid, maps is a list of strings (mapnames)
-          
+      
     elif messages:
         hit_messages = ""
         for message in messages:
@@ -81,7 +86,7 @@ async def make_embed(keyword, maps=None, messages=None):
         embed.add_field(name="Results", value=hit_messages.replace("\\n", " "),
                         inline=False)
         await make_link(keyword)
-        embed.add_field(name="Download", value="[CLICK HERE TO DOWNLOAD](http://whoa.gq/mapdownload.html)".format(keyword),
+        embed.add_field(name="Download", value="[CLICK HERE TO DOWNLOAD](http://whoa.gq/redirect/{}.html)".format(keyword),
                         inline=False)
         embed.set_image(url="http://whoa.gq/mapshots/{}.jpg".format(keyword))
         
@@ -103,6 +108,7 @@ async def mapsearch(author, keyword):
             maps.append(map.name)
             
     # create a new embed with actual data and edit sent message
+    imagetool.imagetool(keyword, maps)
     embed = await make_embed(keyword, maps)
     await message.edit(embed=embed)
     
