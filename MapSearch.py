@@ -4,18 +4,19 @@ import asyncio
 import discord
 import random
 import config
+import math
 import imagetool
 
 TOKEN = config.token
 channel_id = config.channel_id
 client = discord.Client()
 
-
 already_seen = []
 
 map_memory = []
 
 path = config.path
+#path = config.dt_path
 
 class MapData:
 	def __init__(self, name, message):
@@ -47,7 +48,6 @@ def load_maps():
         # open the map as text, ignore bits        
         with codecs.open(path + bsp, 'r', encoding='utf-8',
                                      errors='ignore') as myfile:
-                    print(bsp)
                     lines = myfile.readlines()
                     for line in lines:
                         # search bsp for first message which is the worldspawn message (hopefully/usually)
@@ -78,6 +78,12 @@ async def make_link(keyword):
         """.format(keyword)
         myfile.write(html_str)
 
+def split_string(map_string, maps_length):
+    middle = math.floor(maps_length/2)
+    splitter = map_string.find(" ", middle, maps_length)
+    first_half = map_string[0:splitter]
+    second_half = map_string[splitter:maps_length]
+    return first_half, second_half
 
 async def make_embed(keyword, maps=None, message=None):
     """
@@ -87,11 +93,50 @@ async def make_embed(keyword, maps=None, message=None):
     """
     embed = discord.Embed(title="whoa's map search tool", description="Searching for: {}".format(keyword), color=0xfed900)
     if maps:
-        hit_maps = ""
-        if len(maps) != 0:
-            for map in maps:
-                hit_maps += map + " "
-            embed.add_field(name="Results", value=hit_maps,
+        if maps['Finished']:
+            length = len(maps['Finished'])
+            if length >= 1024:
+                first_half, second_half = split_string(maps['Finished'], length)
+                embed.add_field(name="Finshed Maps:", value=first_half,
+                            inline=False)
+                embed.add_field(name="More:", value=second_half,
+                            inline=False)
+            else:
+                embed.add_field(name="Finshed Maps:", value=maps['Finished'],
+                            inline=False)
+        if maps['Beta']:
+            length = len(maps['Beta'])
+            if length >= 1024:
+                first_half, second_half = split_string(maps['Beta'], length)
+                embed.add_field(name="Beta Maps:", value=first_half,
+                                inline=False)
+                embed.add_field(name="More:", value=second_half,
+                                inline=False)
+            else:
+                embed.add_field(name="Beta Maps:", value=maps['Beta'],
+                            inline=False)
+        if maps['Inprogress']:
+            length = len(maps['Inprogress'])
+            if length >= 1024:
+                print(length)
+                first_half, second_half = split_string(maps['Inprogress'], length)
+                embed.add_field(name="Inprogress Maps:", value=first_half,
+                                inline=False)
+                embed.add_field(name="More:", value=second_half,
+                                inline=False)
+            else:
+                embed.add_field(name="Inprogress Maps:", value=maps['Inprogress'],
+                            inline=False)
+        if maps['Junk']:
+            length = len(maps['Junk'])
+            if length >= 1024:
+                first_half, second_half = split_string(maps['Junk'], length)
+                embed.add_field(name="Junk Maps:", value=first_half,
+                                inline=False)
+                embed.add_field(name="More:", value=second_half,
+                                inline=False)
+            else:
+                embed.add_field(name="Junk Maps:", value=maps['Junk'],
                             inline=False)
             embed.set_image(url="http://whoa.gq/gridshots/{}-grid.jpg".format(keyword))
             # DirtyTaco add code here for mapshots in grid, maps is a list of strings (mapnames)
@@ -114,7 +159,12 @@ async def mapsearch(author, keyword):
     keyword: type: str
     """
 	
-    maps = []
+    maps = {
+        'Finished': "",
+        'Beta': "",
+        'Inprogress': "",
+        'Junk': ""
+    }
     
     # create an empty embed and send it, edit it later
     embed = await make_embed(keyword, maps)
@@ -124,7 +174,14 @@ async def mapsearch(author, keyword):
     # search the maps and their messages in memory for keyword
     for map in map_memory:
         if keyword.lower() in map.message.lower():
-            maps.append(map.name)
+            if 'inprogress/' in map.name:
+                maps['Inprogress'] += "[{}](http://whoa.gq/mapshots/{}.jpg)".format(map.name, map.name) + " "
+            elif 'beta/' in map.name:
+                maps['Beta'] += "[{}](http://whoa.gq/mapshots/{}.jpg)".format(map.name, map.name) + " "
+            elif 'junk/' in map.name:
+                maps['Junk'] += "[{}](http://whoa.gq/mapshots/{}.jpg)".format(map.name, map.name) + " "
+            else:
+                maps['Finished'] += "[{}](http://whoa.gq/mapshots/{}.jpg)".format(map.name, map.name) + " "
             
     # create a new embed with actual data and edit sent message
     # imagetool.imagetool(keyword, maps)
@@ -189,7 +246,7 @@ async def on_message(message):
         
     else:
         
-        if message.content.startswith('!mapsearch'):
+        if message.content.startswith('!mapsearchdev'):
             msg = message.content.split()
             try:
                 keyword = msg[1]
@@ -197,7 +254,7 @@ async def on_message(message):
             except IndexError:
                 await channel.send("Error! No keyword!")
                 
-        elif message.content.startswith('!mapinfo'):
+        elif message.content.startswith('!mapinfodev'):
             msg = message.content.split()
             try:
                 keyword = msg[1]
@@ -210,6 +267,7 @@ async def on_message(message):
             await channel.send("Reloading maps! Please hold...")
             asyncio.create_task(load_maps())
             await channel.send("Map database reloaded. Currently {} maps in database".format(len(map_memory)))
+
         
 
 @client.event
