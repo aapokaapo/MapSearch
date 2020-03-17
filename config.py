@@ -1,5 +1,5 @@
 paths = "paintball2/pball/maps/"
 dt_path=r"C:\Games\Paintball2\pball\maps\\"
-channel_id = 617277011307528202
+channel_id = this shouldn't be here either
 
-token = 'Njg4ODY4NTYxMDI3OTg5NTE0.Xm6lFw.vMumFKBj3CDIsLHxDUtOTiVafPs'
+token = 'DIRTY_TACO YOU'RE TRASH! WITH LUV WHOA'
