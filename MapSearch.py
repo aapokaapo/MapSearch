@@ -48,16 +48,18 @@ def load():
     return message
         
 
-#load maps to memory, slow af!
+#load maps to memory, slow af! //  TODO create a db out of the list so ideally you would have to generate the db just once
 def load_maps():
+	
     map_memory.clear()
     bsps = [] 
+    
     for filename in os.listdir(path):
-        # if filename is dir, add it to path and search that too
+        # if filename is dir, add it to path and search that too // TODO make it search subdirs subdir
         if os.path.isdir(path + filename):
             new_path = path + filename + "/"
             for file in os.listdir(new_path):
-                if file.endswith(".bsp"): 
+                if file.endswith(".bsp"): # don't include txt, ent etc
                     bsps.append(filename + "/" + file) # for maps in 'maps/beta/' etc.
         else:
             if filename.endswith(".bsp"): # don't include txt, ent etc.
@@ -74,19 +76,21 @@ def load_maps():
                     for line in lines:
                         # search bsp for first message which is the worldspawn message (hopefully/usually)
                         if "message".lower() in line.lower():
-                            tmp = line.split(' ', 1)[-1] [1:-2] # strip quotation marks
+                            tmp = line.split(' ', 1)[-1] [1:-2] # line is '"message" "<data>"', we want just data
                             print(tmp)
                             message = tmp.replace("\\n", " ") # strip linebreaks
                             break
-        map_memory.append(MapData(bsp[:-4], message.strip('"')))
+        map_memory.append(MapData(bsp[:-4], message.strip('"'))) # strip the fileextension from bsp
+        
 # great! this should be snappier than opening and closing bunch of files
 print("Mapdata loaded to memory!")
 load_maps() # run on load
-load()
+load() # load also the already seen maps (for "random")
 
 
 async def update_status():
-	sorting_progress = len(already_seen) / len(map_memory)
+	# creates a multiline code message of the sorting status // TODO i think this could be optimized (and prettified)
+    sorting_progress = len(already_seen) / len(map_memory)
     junk = len(os.listdir(path + "junk/"))
     classic = len(os.listdir(path + "classic/"))
     pub = len(os.listdir(path + "pub/"))
@@ -95,6 +99,7 @@ async def update_status():
     beta = len(os.listdir(path + "beta/"))
     total = junk + classic + pub + match + fix + beta
     
+    # changes bots status "Playing with 2017 maps"
     activity = discord.Game(name="with {} maps in database".format(total))
     await client.change_presence(activity=activity)
     
@@ -107,7 +112,7 @@ async def update_status():
     mapshot_beta = len(os.listdir(mapshot_path + "beta/"))
     mapshot_total = mapshot_junk + mapshot_classic + mapshot_pub + mapshot_match + mapshot_fix + mapshot_beta
     
-    msg = "```Sorting progress for junk: {:.1%}\n".format(sorting_progress)
+    msg = "```Sorting progress of all maps: {:.1%}\n".format(sorting_progress)
     msg += "Total maps {} and mapshots {} - {:.1%}\n".format(total, mapshot_total, mapshot_total/total)
     msg += "{} / {} Junk {:.1%}\n".format(junk, mapshot_junk, mapshot_junk/junk)
     msg += "{} / {} Classic {:.1%}\n".format(classic, mapshot_classic, mapshot_classic/classic)
@@ -126,27 +131,35 @@ async def add_mapshot(author, keyword, image):
     channel = client.get_channel(channel_id)
     found = False
     message = "Couldn't find the map you're uploading mapshot for"
+    # check if the map user is trying to submit image for exists
     for map in map_memory:
+        # without prefix eg. "beta/"
         if map.name.split('/')[-1] == keyword:
+            found = True
+            mapname = map.name
+        # with prefix eg. "beta/"
+        elif map.name == keyword:
             found = True
             mapname = map.name
         else:
             pass
 		
     if found:
+        # check if mapshot for the map already exists
         if not os.path.exists("/var/www/html/mapshots/{}.jpg".format(mapname)):
             await image[0].save("/var/www/html/mapshots/{}.jpg".format(mapname))
             message = "Image saved as {}.jpg".format(mapname)
+        
         else:
+            # ask user to confirm overwrite
             msg = await channel.send("{}.jpg already exists. Do you want to overwrite it?".format(keyword))
             await msg.add_reaction(emoji="✔️")
             await msg.add_reaction(emoji="❌")
+            # wait until reaction from the user who executed commamd
             while True:
                 res, user = await client.wait_for('reaction_add', 
                                        check=lambda reaction, user: reaction.emoji == '✔️' or '❌')
-                if user != author:
-                    pass
-                else:
+                if user == author:
                     if res.emoji == "✔️":
                         await image[0].save("/var/www/html/mapshots/{}.jpg".format(mapname))
                         message = "Image saved as {}.jpg".format(mapname)
@@ -155,18 +168,24 @@ async def add_mapshot(author, keyword, image):
                         message = "Image not saved"
                         break
             await msg.delete()
-            
-                
+                  
     return message
     
     
 async def delete_map(keyword, reason, author):
+    """
+    keyword: type: str
+    reason: type: str
+    author: type: discord.Member
+    """
     channel = client.get_channel(channel_id)
     found = False
     delete_this = None
     message = "Couldn't find the map you're trying to delete"
+    
+    # check if the map exists
     for map in map_memory:
-        if map.name.split('/')[-1] == keyword:
+        if map.name.split('/')[-1].lower() == keyword.lower():
             found = True
             delete_this = map
             mapname = map.name            
@@ -174,15 +193,15 @@ async def delete_map(keyword, reason, author):
             pass
             
     if found:
+        # ask user for confirmation
         msg = await channel.send("Do you really want to remove {}?".format(keyword))
         await msg.add_reaction(emoji="✔️")
         await msg.add_reaction(emoji="❌")
+        # wait until confirmation from user who executed the command
         while True:
                 res, user = await client.wait_for('reaction_add', 
                                        check=lambda reaction, user: reaction.emoji == '✔️' or '❌')
-                if user != author:
-                    pass
-                else:
+                if user == author:
                     if res.emoji == "✔️":
                         os.remove(path+mapname+".bsp")
                         map_memory.remove(delete_this)
@@ -207,7 +226,7 @@ async def mapsearch(author, keyword):
     """
     maps = {
                 'beta': "",
-                'inproress': "",
+                'inprogress': "",
                 'junk': "",
                 'pub': "",
                 'match': "",
@@ -215,46 +234,45 @@ async def mapsearch(author, keyword):
                 'classic': "",
                 'finished': ""
     }
-    
-    # create an empty embed and send it, edit it later
-    embed = await embedmaker.make_embed(keyword, maps)
+
     channel = client.get_channel(channel_id)
-    message = await channel.send(embed=embed)
     
     # search the maps and their messages in memory for keyword
     for map in map_memory:
-        already_triggered = []
+        already_triggered = False
+        # check the prefix
         prefix = map.name.split('/')[0]
-        if prefix != map.name:
-            if keyword.lower() in map.message.lower():
+        # prefix could be map.name, if it didn't have '/' in it
+        if prefix == map.name:
+            prefix = 'finished'
+        # check if keyword can be found in the map message
+        if keyword.lower() in map.message.lower():
+            # check if the map has mapshot, create a link to image if so
+            if os.path.exists(mapshot_path + map.name + '.jpg'):
+                # discord markdown for clickable link
+                maps[prefix] += "[{}](http://whoa.gq/mapshots/{}.jpg)".format(map.name.split('/')[-1], map.name) + " "
+            else:
+                # add just the name of the map if there's no mapshot
+                maps[prefix] += map.name.split('/')[-1] + " "
+            # add the map to list so that of keyword is both on map name and message it won't trigger twice
+            already_triggered = True
+            
+        # check if keyword is in the map name
+        if keyword.lower() in map.name.lower():
+            # make sure that the map has not already been appended
+            if not already_triggered:
+                # check if the map has mapshot, if so create a link
                 if os.path.exists(mapshot_path + map.name + '.jpg'):
+                    # discord markdown for clickable link
                     maps[prefix] += "[{}](http://whoa.gq/mapshots/{}.jpg)".format(map.name.split('/')[-1], map.name) + " "
                 else:
-                    maps[prefix] += map.name.split('/')[-1] + " "
-                already_triggered.append(map.name)
-            if keyword.lower() in map.name.lower():
-                if map.name not in already_triggered:
-                    if os.path.exists(mapshot_path + map.name + '.jpg'):
-                        maps[prefix] += "[{}](http://whoa.gq/mapshots/{}.jpg)".format(map.name.split('/')[-1], map.name) + " "
-                    else:
-                        maps[prefix] += map.name.split('/')[-1] + " "
-        else:
-            if keyword.lower() in map.message.lower():
-                if os.path.exists(mapshot_path + map.name + '.jpg'):
-                    maps['finished'] += "[{}](http://whoa.gq/mapshots/{}.jpg)".format(map.name, map.name) + " "
-                else:
-                    maps['finished'] += map.name.split('/')[-1] + " "
-                already_triggered.append(map.name)
-            if keyword.lower() in map.name.lower():
-                if map.name not in already_triggered:
-                    if os.path.exists(mapshot_path + map.name + '.jpg'):
-                        maps['finished'] += "[{}](http://whoa.gq/mapshots/{}.jpg)".format(map.name, map.name) + " "
-                    else:
-                        maps['finished'] += map.name.split('/')[-1] + " "
+                    # append just the mapname if it doesn't have mapshot
+                    maps[prefix] += map.name.split('/')[-1] + " "      
                 
-    # create a new embed with actual data and edit sent message
-    embed = await embedmaker.make_embed(keyword, maps)
-    await message.edit(embed=embed)
+    # creates list of embeds from the maps
+    embeds = await embedmaker.make_embed(keyword, maps)
+    for embed in embeds:
+        await channel.send(embed=embed)
     
     # notify user that search is done
     await channel.send(author.mention)
@@ -266,11 +284,7 @@ async def mapinfo(author, keyword):
     keyword: type: str
     keyword: example: 'beta/greenhill_b1'
     """
-    # create an empty embed, edit it later
-    embed = await embedmaker.make_embed(keyword)
     channel = client.get_channel(channel_id)
-    bot_message = await channel.send(embed=embed)
-    
     # search for the bsp, and look for worldspawn message
     message = "Couldn't find the map"
     name = keyword
@@ -283,7 +297,7 @@ async def mapinfo(author, keyword):
                 already_seen.append(map.name)
     
     embed = await embedmaker.make_embed(name, message=message)
-    await bot_message.edit(embed=embed)                    
+    await channel.send(embed=embed)                    
    
      
 async def choose_random_map():
