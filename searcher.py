@@ -1,53 +1,30 @@
 import embedmaker
 import os
-from config import mapshot_path
+from config import mapshot_path, public_mapshot_path
 
-async def mapsearch(map_memory, keyword, tags=False):
-    """
-    author: type: discord.Member
-    keyword: type: str
-    keyword: example: 'dirtytaco'
-    """
+
+async def map_search(keyword, input_maps):
     maps = {
                 'beta': "",
                 'inprogress': "",
-                'junk': "",
-                'pub': "",
-                'match': "",
-                'fix': "",
-                'classic': "",
-                'finished': "",
-                'tutorials': ""
+                'tutorials': "",
     }
-
-    # search the maps and their messages in memory for keyword
-    for map in map_memory:
+    for current_map in input_maps:
         # check the prefix
-        prefix = map.name.split('/')[0]
+        prefix = current_map.split('/')[0]
         # prefix could be map.name, if it didn't have '/' in it
-        if prefix == map.name:
+        if prefix == current_map:
             prefix = 'finished'
-        if not tags:
-            # check if keyword can be found in the map message or the map name
-            if keyword.lower() in map.message.lower() or keyword.lower() in map.name.lower():
-                # check if the map has mapshot, create a link to image if so
-                if os.path.exists(mapshot_path + map.name + '.jpg'):
-                    # discord markdown for clickable link
-                    maps[prefix] += "[{}](http://whoa.ml/mapshots/{}.jpg)".format(map.name.split('/')[-1], map.name) + " "
-                else:
-                    # add just the name of the map if there's no mapshot
-                    maps[prefix] += map.name.split('/')[-1] + " "
-                
+        if not 'finished' in maps.keys():
+            maps['finished'] = ""
+        print(maps[prefix])
+        if os.path.exists(mapshot_path + current_map + '.jpg'):
+            # discord markdown for clickable link
+            maps[prefix] += f"[{current_map.split('/')[-1]}]({public_mapshot_path}{current_map}.jpg) "
         else:
-            if keyword.lower() in map.tags:
-                # check if the map has mapshot, create a link to image if so
-                if os.path.exists(mapshot_path + map.name + '.jpg'):
-                    # discord markdown for clickable link
-                    maps[prefix] += "[{}](http://whoa.ml/mapshots/{}.jpg)".format(map.name.split('/')[-1], map.name) + " "
-                else:
-                    # add just the name of the map if there's no mapshot
-                    maps[prefix] += map.name.split('/')[-1] + " "
-    # creates list of embeds from the maps
+            # add just the name of the map if there's no mapshot
+            maps[prefix] += current_map.split('/')[-1] + " "
+    # print("new shit", maps)
     embeds = await embedmaker.make_embed(keyword, maps)
-    
+    # print(keyword)
     return embeds

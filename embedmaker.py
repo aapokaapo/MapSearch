@@ -1,6 +1,7 @@
 import discord
 import serverinfo
 from operator import itemgetter, attrgetter
+from config import trivia_path, public_mapshot_path, public_trivia_path, public_topshot_path, public_map_path
 
 
 async def split_string(maps_string):
@@ -33,7 +34,7 @@ async def split_string(maps_string):
             
     # return a list of strings
     return strings
-	    
+
 
 async def make_embed(keyword, maps=None, message=None, tags=None):
     """
@@ -43,7 +44,7 @@ async def make_embed(keyword, maps=None, message=None, tags=None):
     message: type: str
     """
     embeds = []
-    embed = discord.Embed(title="whoa's map search tool", description="Searching for: {}".format(keyword), color=0xfed900)
+    embed = discord.Embed(title="WIP DP2 Map Browser", description="Searching for: {}".format(keyword), color=0xfed900)
     if maps:
         i = 1
         # cycle through all the categories
@@ -76,7 +77,7 @@ async def make_embed(keyword, maps=None, message=None, tags=None):
                     # if embed has 5 fields, append current and make an empty one
                     else:
                         embeds.append(embed)
-                        embed = discord.Embed(title="whoa's map search tool", description="Searching for: {}".format(keyword), color=0xfed900)
+                        embed = discord.Embed(title="WIP DP2 Map Browser", description="Searching for: {}".format(keyword), color=0xfed900)
                         i = 1
                         
         # when done with all strings, append the last embed
@@ -94,12 +95,12 @@ async def make_embed(keyword, maps=None, message=None, tags=None):
             embed.add_field(name="Tags", value=tags, inline=False)
         if keyword != "No match":
             # add download link
-            embed.add_field(name="Download", value="[CLICK HERE TO DOWNLOAD](http://whoa.ml/maps/{}.bsp)".format(keyword),
+            embed.add_field(name="Download", value="[CLICK HERE TO DOWNLOAD](" + public_map_path + keyword + ".bsp)",
                             inline=False)
             # add a mapshot
-            embed.set_image(url="http://whoa.ml/mapshots/{}.jpg".format(keyword))
+            embed.set_image(url=public_mapshot_path + keyword + ".jpg")
             # add thumbnail
-            embed.set_thumbnail(url="http://whoa.ml/topshots/{}.png".format(keyword))
+            embed.set_thumbnail(url=public_topshot_path + keyword + ".jpg")
             embed.set_footer(text="Powered by Toolwut's BSP images", icon_url="https://www.zwodnik.com/media/cache/c3/b9/c3b94c5c0934232730a21baa3bddcb1c.png")
         # returns a single embed
         return embed
@@ -121,10 +122,10 @@ def make_results(status, map_memory, teams=None, winner=None):
             string += "**{}**\n{}\n".format(team, teams[team.split(":")[0]])
             
         embed.add_field(name="Winner team: {}".format(winner_team.split(":")[0]), value=string, inline=False)
-        embed.add_field(name="Map", value=status.get("mapname").split("/")[-1], inline=False)
+        embed.add_field(name="Map", value=status.get("map_name").split("/")[-1], inline=False)
         for map in map_memory:
-            if map.name.split('/')[-1] == status.get("mapname").split("/")[-1]:
-                embed.set_thumbnail(url="http://whoa.ml/mapshots/{}.jpg".format(map.name))
+            if map.name.split('/')[-1] == status.get("map_name").split("/")[-1]:
+                embed.set_thumbnail(url=public_mapshot_path + map.name + ".jpg")
     
     if winner:
         embed.add_field(name="Winner: {}".format(winner.name), value="With {} kills, {} wins the map!".format(winner.score, winner.name), inline=False)
@@ -133,6 +134,7 @@ def make_results(status, map_memory, teams=None, winner=None):
         embed.add_field(name="Scoreboard", value=string, inline=False)
             
     return embed
+
 
 def make_status(ip, port, map_memory=None):
     teams = {"Red": "", "Blue": "", "Yellow": "", "Purple": "", "Observer": "", "Unknown": ""}
@@ -146,11 +148,11 @@ def make_status(ip, port, map_memory=None):
             scoring_leader = sorted(status.get("players"), key=attrgetter('score'), reverse=True)[0]
             embed.add_field(name="Scores", value="{} is in the lead with {} kills".format(scoring_leader.name, scoring_leader.score),
                                 inline=False)
-    embed.add_field(name="Map", value="{} - Time: {}".format(status.get("mapname"), status.get("TimeLeft")), inline=False)
-    if status.get("mapname"):
+    embed.add_field(name="Map", value="{} - Time: {}".format(status.get("map_name"), status.get("TimeLeft")), inline=False)
+    if status.get("map_name"):
         for map in map_memory:
-            if map.name.split('/')[-1] == status.get("mapname").split("/")[-1]:
-                embed.set_thumbnail(url="http://whoa.ml/mapshots/{}.jpg".format(map.name))
+            if map.name.split('/')[-1] == status.get("map_name").split("/")[-1]:
+                embed.set_thumbnail(url=public_mapshot_path + map.name + ".jpg")
     if status.get("players"):
         playercount = len(status.get("players"))
         for player in status.get("players"):
@@ -158,8 +160,7 @@ def make_status(ip, port, map_memory=None):
         for team in teams:
             if teams[team]:
                 embed.add_field(name=team, value=teams[team], inline=True)
-                
-    
+
     results = None
     if status.get("_scores"):
         for team in status.get("_scores").split():
@@ -189,9 +190,9 @@ def get_servers():
     return servers, embed
     
     
-def trivia(map):
+def trivia(filename):
     embed = discord.Embed(title="whoa's map trivia", description="What's this map?", color=0xfed900)
-    embed.set_image(url="http://whoa.ml/topshots/{}.jpg".format(map))
+    embed.set_image(url=public_trivia_path + filename + ".jpg")
     embed.set_footer(text="Powered by Toolwut's BSP images", icon_url="https://www.zwodnik.com/media/cache/c3/b9/c3b94c5c0934232730a21baa3bddcb1c.png")
     
     return embed
