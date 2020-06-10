@@ -1,41 +1,56 @@
-import os
+pball_path = 
+topshot_path = 
+mapshot_path = 
+model_path = 
+texture_path = 
+env_path = 
+script_path = 
+map_path = 
+sound_path = 
+database_path = 
+public_mapshot_path = 
+local_mapshot_path = 
+trivia_path = 
+public_trivia_path = 
+server_list = 
+public_topshot_path = 
+public_map_path = 
 
-path = "/var/www/html/maps/"
-
-mapshot_path = "/var/www/html/mapshots/"
-
-savefile = "savefile.dat"
-mapdata = "mapdata.dat"
-
+# discord channel ids
 channels = []
 
-token = token (string)
 
-# discord.Member.id
+# discord user ids
 users = []
 
-whoa = 232103087806873600
+# discord bot token
+TOKEN = 
+
+admins = []
 
 help_message = """
-    `!mapsearch` `<keyword>` - Returns a list of maps with the keyword in either name or message
-    `!mapinfo` `<map name>` - Returns info about the map
-    `!tagsearch` `<tag>` - Returns a list of maps with the tag
-    `!status` - Returns map database info and status for sorting
-    
-    User commands:
+    **Admin commands:**
+    `!reloadmaps` - Updates the map data (in comparison to the file system)
+    `!reloadrequirements` - Reloads tables for map requirements and specified if they're provided
+
+    **User commands:**
     `!mapshot` `<map name>` (attached image) - Adds attached image as the maps mapshot
     `!addtag` `<map name>` `<tags>` - Adds tags for the map, separate tags with whitespace
     `!deltag` `<map name>` `<tags>` - Removes tags from the map, separate tags with whitespace
+
+    **Public commands:**
+    `!updatefiles` - Updates if required files are provided by the server
+    `!files` - lists how many maps are on the server and how many of their required files are provided or not
     
-    Admin commands:
-    `!delete` `<map name>` `<optional reason>` - Deletes the map and its mapshot, writes down reason for removal
-    `!reload` - Reloads the map data
+    *Map Browser*
+    `!mapsearch` `<keyword>` - Returns a list of maps with the keyword in either name or message
+    `!mapinfo` `<map name>` - Returns map information (path, message, tags etc.)
     
-    Broadcast commands:
+    *Broadcast*
     `!broadcast` - shows a list of populated servers
     `!scores` `<ip>:<port>` - broadcast the server specified with direct ip and port
     
-    Trivia commands:
+    *Trivia*
     `!trivia` - starts a trivia instance, if nobody answers correctly in 50 messages, closes itself
     `pass` - passes the question
     `hint` - gives the answer letter by letter

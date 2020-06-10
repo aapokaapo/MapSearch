@@ -1,0 +1,39 @@
+-file /var/www/html/pball/test 13:26:24.561760
++file /var/www/html/pball/new file 13:26:33.099928
++file /var/www/html/pball/test1 13:26:35.107393
+-file /var/www/html/pball/new file 13:26:35.108431
++file /var/www/html/pball/test2 14:29:58.377887
++file /var/www/html/pball/test3 14:30:47.397954
+-file /var/www/html/pball/test2 14:30:47.402141
++file /var/www/html/pball/maps/test3 14:31:19.274108
+-file /var/www/html/pball/test3 14:31:19.277483
++file /var/www/html/pball/maps/test3.bsp 14:31:29.392922
+-file /var/www/html/pball/maps/test3 14:31:29.395684
++file /var/www/html/pball/maps/test4.bsp 14:32:37.991155
+-file /var/www/html/pball/maps/test3.bsp 14:34:13.691867
++file /var/www/html/pball/maps/new file 14:34:14.766324
++file /var/www/html/pball/maps/test5 14:34:14.767662
+-file /var/www/html/pball/maps/new file 14:34:14.768671
+-file /var/www/html/pball/maps/test4.bsp 14:39:54.980052
++file /var/www/html/pball/maps/teabagga (copy).bsp 14:40:17.724872
++file /var/www/html/pball/maps/teabaggatest.bsp 14:40:27.000603
+-file /var/www/html/pball/maps/teabagga (copy).bsp 14:40:28.012859
+-file /var/www/html/pball/maps/teabaggatest.bsp 14:41:22.628548
+-file /var/www/html/pball/maps/test5 14:41:25.180680
++file /var/www/html/pball/maps/tek9 (copy).bsp 15:37:54.367473
++file /var/www/html/pball/maps/tek9test.bsp 15:38:07.445537
+-file /var/www/html/pball/maps/tek9 (copy).bsp 15:38:08.461239
+-file /var/www/html/pball/maps/tek9test.bsp 15:38:30.820021
++file /var/www/html/pball/maps/swk2 (copy).bsp 15:38:48.137161
++file /var/www/html/pball/maps/swk2test.bsp 15:38:53.123505
+-file /var/www/html/pball/maps/swk2 (copy).bsp 15:38:54.137235
++file /var/www/html/pball/maps/swk2test2.bsp 15:40:09.571994
+-file /var/www/html/pball/maps/swk2test.bsp 15:40:10.674858
++file /var/www/html/pball/maps/swk2test4.bsp 15:46:08.840655
+-file /var/www/html/pball/maps/swk2test3.bsp 15:46:10.887956
++file /var/www/html/pball/pics/mapshots/new file 15:54:04.484339
++file /var/www/html/pball/pics/mapshots/swk2test4.png 15:54:13.713650
+-file /var/www/html/pball/pics/mapshots/new file 15:54:13.806429
+-file /var/www/html/pball/pics/mapshots/swk2test4.png 15:54:58.615541
++file /var/www/html/pball/maps/ent/shazam22.ent 21:24:15.801811
++file /var/www/html/pball/pics/mapshots/beta/ranger_b2.jpg 15:51:25.182497

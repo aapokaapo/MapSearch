@@ -1,7 +1,7 @@
 from socket import socket, AF_INET, SOCK_DGRAM
 from parse import decode_ingame_text as decoder
 import urllib
-
+from config import server_list
 """
 ÿÿÿÿprint
 \py\!0
@@ -106,10 +106,10 @@ def status(ip, port):
         data = None
     return parse_status(data)
     sock.close
-    
+
+
 def get_serverlist():
-    url = "https://otb-server.de/serverlist.txt"
-    file = urllib.request.urlopen(url)
+    file = urllib.request.urlopen(server_list)
     servers = []
     for line in file:
         if line.decode("utf-8")[0].isdigit():
