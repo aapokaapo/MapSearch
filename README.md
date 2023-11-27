@@ -1,7 +1,7 @@
 # MapSearch
 
 This is an improved version of the Discord Search bot for Digital Paintball 2 maps at https://github.com/aapokaapo/MapSearch currently running
-at the official Paintball 2 Discord. Its web-end is currently hosted at http://whoa.ml/dpfiles/map_browser.php
+at the official Paintball 2 Discord. Its web-end is currently hosted at https://mapsearch.website 
 
 The original bot supported searching for maps, the trivia game
  (a map guessing game based on renderings using https://github.com/lennart-g/BSP-Hacking),
