@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 import zipfile
 from pathlib import PurePosixPath
@@ -94,15 +95,29 @@ async def upload_map(
 
                 # Determine the zip-internal root prefix from the first BSP.
                 # The BSP must live inside a "maps/" directory component.
-                first_bsp_parts = PurePosixPath(bsp_entries[0]).parts
-                try:
-                    maps_idx = [p.lower() for p in first_bsp_parts].index("maps")
-                except ValueError:
+                def _bsp_prefix(bsp_path: str) -> str | None:
+                    parts = PurePosixPath(bsp_path).parts
+                    try:
+                        idx = [p.lower() for p in parts].index("maps")
+                    except ValueError:
+                        return None
+                    prefix = "/".join(parts[:idx])
+                    return prefix + "/" if prefix else ""
+
+                first_prefix = _bsp_prefix(bsp_entries[0])
+                if first_prefix is None:
                     await ctx.respond("Error: BSP file is not inside a `maps/` directory in the ZIP.")
                     return
-                zip_prefix = "/".join(first_bsp_parts[:maps_idx])
-                if zip_prefix:
-                    zip_prefix += "/"
+
+                # Verify all BSPs share the same prefix so nothing is silently skipped.
+                mismatched = [e for e in bsp_entries if _bsp_prefix(e) != first_prefix]
+                if mismatched:
+                    await ctx.respond(
+                        "Error: ZIP contains BSP files at inconsistent nesting levels:\n"
+                        + "\n".join(f"`{e}`" for e in mismatched[:10])
+                    )
+                    return
+                zip_prefix = first_prefix
 
                 # Allowed top-level directories within the pball root.
                 ALLOWED_DIRS = {"maps", "textures", "sound", "env", "scripts", "pics"}
@@ -134,7 +149,7 @@ async def upload_map(
 
                     os.makedirs(os.path.dirname(dest), exist_ok=True)
                     with zf.open(member) as src, open(dest, "wb") as dst:
-                        dst.write(src.read())
+                        shutil.copyfileobj(src, dst)
                     extracted_count += 1
 
                 for entry in bsp_entries:
