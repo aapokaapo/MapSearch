@@ -79,22 +79,80 @@ async def upload_map(
         try:
             with zipfile.ZipFile(tmp_path, "r") as zf:
                 members = zf.namelist()
-                bsp_entries = [m for m in members if m.startswith("maps/") and m.endswith(".bsp")]
-                if not bsp_entries:
-                    await ctx.respond("Error: ZIP does not contain any `maps/*.bsp` files.")
-                    return
+
+                # First pass: validate all entries for safety (no absolute paths or traversal).
                 for member in members:
                     if os.path.isabs(member) or ".." in PurePosixPath(member).parts:
                         await ctx.respond("Error: ZIP contains unsafe paths.")
                         return
-                zf.extractall(upload_path)
-            for entry in bsp_entries:
-                map_rel = os.path.splitext(entry[len("maps/"):])[0]
-                saved_bsps.append(map_rel)
+
+                # Find any .bsp file in the zip regardless of nesting depth.
+                bsp_entries = [m for m in members if m.lower().endswith(".bsp") and not m.endswith("/")]
+                if not bsp_entries:
+                    await ctx.respond("Error: ZIP does not contain any `.bsp` files.")
+                    return
+
+                # Determine the zip-internal root prefix from the first BSP.
+                # The BSP must live inside a "maps/" directory component.
+                first_bsp_parts = PurePosixPath(bsp_entries[0]).parts
+                try:
+                    maps_idx = [p.lower() for p in first_bsp_parts].index("maps")
+                except ValueError:
+                    await ctx.respond("Error: BSP file is not inside a `maps/` directory in the ZIP.")
+                    return
+                zip_prefix = "/".join(first_bsp_parts[:maps_idx])
+                if zip_prefix:
+                    zip_prefix += "/"
+
+                # Allowed top-level directories within the pball root.
+                ALLOWED_DIRS = {"maps", "textures", "sound", "env", "scripts", "pics"}
+
+                real_upload = os.path.realpath(upload_path)
+                extracted_count = 0
+
+                for member in members:
+                    if member.endswith("/"):  # skip directory entries
+                        continue
+
+                    # Strip the zip prefix to get the pball-relative path.
+                    if zip_prefix and not member.startswith(zip_prefix):
+                        continue
+                    rel = member[len(zip_prefix):]
+                    if not rel:
+                        continue
+
+                    # Only extract files under known safe directories.
+                    first_component = PurePosixPath(rel).parts[0].lower() if PurePosixPath(rel).parts else ""
+                    if first_component not in ALLOWED_DIRS:
+                        continue
+
+                    dest = os.path.normpath(os.path.join(upload_path, rel))
+                    # Final path-traversal guard after normpath.
+                    if not os.path.realpath(dest).startswith(real_upload + os.sep):
+                        await ctx.respond("Error: ZIP contains unsafe paths.")
+                        return
+
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    with zf.open(member) as src, open(dest, "wb") as dst:
+                        dst.write(src.read())
+                    extracted_count += 1
+
+                for entry in bsp_entries:
+                    entry_parts = PurePosixPath(entry).parts
+                    try:
+                        entry_maps_idx = [p.lower() for p in entry_parts].index("maps")
+                    except ValueError:
+                        continue
+                    # Relative path within maps/ e.g. "subfolder/mapname"
+                    map_rel = "/".join(entry_parts[entry_maps_idx + 1:])
+                    map_rel = os.path.splitext(map_rel)[0]
+                    if map_rel:
+                        saved_bsps.append(map_rel)
+
             await ctx.respond(
-                f"✅ ZIP extracted. Found BSP files:\n"
-                + "\n".join(f"`{e}`" for e in bsp_entries[:20])
-                + ("\n…and more" if len(bsp_entries) > 20 else "")
+                f"✅ ZIP extracted ({extracted_count} files). Found BSP files:\n"
+                + "\n".join(f"`maps/{m}.bsp`" for m in saved_bsps[:20])
+                + ("\n…and more" if len(saved_bsps) > 20 else "")
             )
         except zipfile.BadZipFile:
             await ctx.respond("Error: The uploaded file is not a valid ZIP archive.")
