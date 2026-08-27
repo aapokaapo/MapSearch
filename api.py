@@ -127,6 +127,11 @@ def _collect_map_files(bsp_file: str, map_rel: str, pball: str):
                 os.path.join(pball, "textures", tex + "." + ext),
                 f"pball/textures/{tex}.{ext}",
             )
+            # Higher-resolution versions live under textures/hr4/
+            _add(
+                os.path.join(pball, "textures", "hr4", tex + "." + ext),
+                f"pball/textures/hr4/{tex}.{ext}",
+            )
 
     # ── Entity lump (lump 0) – extract sound / sky references ───────────────
     ent_off, ent_len = _lump(0)
