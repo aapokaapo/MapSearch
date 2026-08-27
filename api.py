@@ -7,6 +7,7 @@ from typing import List, Optional
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import case
 from sqlmodel import Session, select
 
 from database import get_session
@@ -35,13 +36,14 @@ def search_maps(keyword: str, session: Session = Depends(get_session)):
     tag_map_ids = session.exec(
         select(Tag.map_id).where(Tag.tag_name.like(kw))
     ).all()
+    _is_beta = Map.map_path.like("%beta%") | Map.map_path.op("GLOB")("*_b[0-9]*")
     results = session.exec(
         select(Map).where(
             Map.map_path.like(kw)
             | Map.map_name.like(kw)
             | Map.message.like(kw)
             | Map.map_id.in_(tag_map_ids)
-        )
+        ).order_by(case((_is_beta, 1), else_=0))
     ).all()
     return results
 
