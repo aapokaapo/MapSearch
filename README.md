@@ -36,8 +36,9 @@ Discord bot for Digital Paintball 2 map discovery and metadata management — bu
 pip install -r requirements.txt
 ```
 
-3. Edit `config.py` and fill in all paths and IDs.
-4. Start the bot:
+3. Copy `.env.example` to `.env` and add the Discord bot token there.
+4. Edit `config.py` and fill in all paths and IDs.
+5. Start the bot:
 
 ```bash
 python MapSearch.py
@@ -47,7 +48,6 @@ python MapSearch.py
 
 | Variable | Description |
 |---|---|
-| `TOKEN` | Discord bot token |
 | `channels` | List of allowed Discord channel IDs |
 | `users` | List of Discord user IDs with elevated permissions |
 | `admins` | List of Discord admin user IDs |
@@ -58,9 +58,14 @@ python MapSearch.py
 | `mapshot_path` / `public_mapshot_path` | Local and public URL paths for mapshots |
 | `texture_path`, `env_path` | Paths to textures and sky images |
 
+## Environment (`.env`)
+
+| Variable | Description |
+|---|---|
+| `TOKEN` | Discord bot token |
+
 ## Upload format
 
 The `/upload_map` command accepts:
 - **`.bsp`** — placed directly under `{upload_path}/maps/[subfolder]/`
 - **`.zip`** — extracted to `upload_path`; must contain a `maps/` directory at the archive root with at least one `.bsp` file inside. The zip must not contain absolute paths or `..` components.
-
