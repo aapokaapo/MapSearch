@@ -76,6 +76,11 @@ async def make_embed(keyword, maps=None, message=None, tags=None):
         if keyword != "No match":
             from config import base_url
             embed.add_field(
+                name="Map Website",
+                value="[CLICK HERE](" + base_url + "/map.html?path=" + keyword)",
+                inline=False,
+           ) 
+            embed.add_field(
                 name="Download",
                 value="[CLICK HERE TO DOWNLOAD](" + base_url + "/api/maps/" + keyword + "/download)",
                 inline=False,
