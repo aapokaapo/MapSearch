@@ -4,14 +4,14 @@ import zipfile
 from pathlib import PurePosixPath
 
 import discord
-from config import TOKEN, upload_path, database_path, map_path
+from config import TOKEN, upload_path, map_path
 from collections import deque
-from db_io import create_connection, find_map_name
+from database import engine
 from db_queries import print_map_search, print_map_info
 from db_updates import add_map_to_db, generate_topshot
+from sqlmodel import Session
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking"))
-from Q2BSP import Q2BSP
 
 
 bot = discord.Bot()
@@ -24,20 +24,16 @@ already_seen: deque = deque(maxlen=50)
 
 @bot.slash_command(description="Search for maps by keyword (name, message or tag)")
 async def mapsearch(ctx: discord.ApplicationContext, keyword: str):
-    conn = create_connection(database_path)
     await ctx.defer()
-    await print_map_search(keyword, conn, ctx)
-    conn.commit()
-    conn.close()
+    with Session(engine) as session:
+        await print_map_search(keyword, session, ctx)
 
 
 @bot.slash_command(description="Show info for a specific map, or a random map if none specified")
 async def mapinfo(ctx: discord.ApplicationContext, map_name: str = None):
-    conn = create_connection(database_path)
     await ctx.defer()
-    await print_map_info(map_name, conn, already_seen, ctx)
-    conn.commit()
-    conn.close()
+    with Session(engine) as session:
+        await print_map_info(map_name, session, already_seen, ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +62,6 @@ async def upload_map(
 
     safe_subfolder = os.path.normpath(subfolder).lstrip("/\\").replace("..", "")
 
-    conn = create_connection(database_path)
     saved_bsps = []
 
     if filename.endswith(".bsp"):
@@ -87,12 +82,10 @@ async def upload_map(
                 bsp_entries = [m for m in members if m.startswith("maps/") and m.endswith(".bsp")]
                 if not bsp_entries:
                     await ctx.respond("Error: ZIP does not contain any `maps/*.bsp` files.")
-                    conn.close()
                     return
                 for member in members:
                     if os.path.isabs(member) or ".." in PurePosixPath(member).parts:
                         await ctx.respond("Error: ZIP contains unsafe paths.")
-                        conn.close()
                         return
                 zf.extractall(upload_path)
             for entry in bsp_entries:
@@ -105,18 +98,19 @@ async def upload_map(
             )
         except zipfile.BadZipFile:
             await ctx.respond("Error: The uploaded file is not a valid ZIP archive.")
-            conn.close()
             return
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
     # Add each new BSP to the database and generate its topshot
+    with Session(engine) as session:
+        for map_rel in saved_bsps:
+            add_map_to_db(map_rel, session)
+        session.commit()
+
     for map_rel in saved_bsps:
-        add_map_to_db(map_rel, conn)
         generate_topshot(map_rel)
-    conn.commit()
-    conn.close()
 
     if saved_bsps:
         await ctx.channel.send(f"📦 Database updated and topshots generated for: {', '.join(f'`{m}`' for m in saved_bsps)}")
