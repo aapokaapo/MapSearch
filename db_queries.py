@@ -1,10 +1,10 @@
+from utils import send
 from db_io import *
 import searcher
 from sqlite3 import Connection
 import random
 import embedmaker
 from collections import deque
-
 
 async def _send(ctx_or_channel, **kwargs):
     """Send a message to either a slash-command context or a raw channel."""
@@ -17,7 +17,6 @@ async def _send(ctx_or_channel, **kwargs):
             await ctx_or_channel.channel.send(**kwargs)
     else:
         await ctx_or_channel.send(**kwargs)
-
 
 async def print_map_search(keyword: str, conn: Connection, ctx) -> None:
     """
@@ -34,8 +33,7 @@ async def print_map_search(keyword: str, conn: Connection, ctx) -> None:
     rows = [a for b in select(conn, select_sql, (f"%{keyword}%",) * 3) for a in b]
 
     for embed in await searcher.map_search(keyword, rows):
-        await _send(ctx, embed=embed)
-
+        await send(ctx, embed=embed)
 
 async def print_map_info(keyword: str, conn: Connection, already_seen: deque, ctx) -> None:
     """
@@ -78,8 +76,7 @@ async def print_map_info(keyword: str, conn: Connection, already_seen: deque, ct
         tags = ""
 
     embed = await embedmaker.make_embed(name, message=message, tags=tags)
-    await _send(ctx, embed=embed)
-
+    await send(ctx, embed=embed)
 
 def get_random_map(already_seen: deque, conn: Connection, keyword: str = None) -> str:
     """

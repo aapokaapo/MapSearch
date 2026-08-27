@@ -1,3 +1,4 @@
+from utils import send
 import codecs
 import sys
 
@@ -15,18 +16,6 @@ from Q2BSP import *
 
 sys.path.append("../md2-importer")  # Adds higher directory to python modules path.
 from md2 import *
-
-
-async def _send(ctx_or_channel, content=None, **kwargs):
-    if hasattr(ctx_or_channel, "respond"):
-        if not getattr(ctx_or_channel, "_responded", False):
-            await ctx_or_channel.respond(content, **kwargs)
-            ctx_or_channel._responded = True
-        else:
-            await ctx_or_channel.channel.send(content, **kwargs)
-    else:
-        await ctx_or_channel.send(content, **kwargs)
-
 
 async def insert_requirements(conn, mapname):
     """
@@ -77,7 +66,6 @@ async def insert_requirements(conn, mapname):
             select_sql = """insert into requirements(map_id, file_id) select (select map_id from maps where map_path=?), (select file_id from media_files where path=?)"""
             _ = select(conn, select_sql, (mapname, req))
 
-
 async def reload_requirements(conn: Connection, ctx=None, mapname=None) -> None:
     """
     Wipes the media_files and requirements tables and re-calculates all the requirements
@@ -88,7 +76,7 @@ async def reload_requirements(conn: Connection, ctx=None, mapname=None) -> None:
     """
     if mapname:
         if ctx:
-            await _send(ctx, "mapname " + mapname)
+            await send(ctx, "mapname " + mapname)
         try:
             found, mapname = find_map_name(mapname, conn)
             if found:
@@ -99,21 +87,23 @@ async def reload_requirements(conn: Connection, ctx=None, mapname=None) -> None:
                 await insert_requirements(conn, mapname)
             else:
                 if ctx:
-                    await _send(ctx, "Error: Map " + mapname + " not found!")
+                    await send(ctx, "Error: Map " + mapname + " not found!")
                 else:
                     return -1
         except Exception:
             if ctx:
-                await _send(ctx, "An unknown error occurred!")
+                await send(ctx, "An unknown error occurred!")
             else:
                 return -2
     else:
         select_sql = """ select * from maps"""
         rows = select(conn, select_sql, ())
-        await _send(ctx, "Reloading requirements of " + str(len(rows)) + " files ...")
+        if ctx:
+            await send(ctx, "Reloading requirements of " + str(len(rows)) + " files ...")
         clear_requirements(conn)
         conn.commit()
-        await _send(ctx, "passed clearing")
+        if ctx:
+            await send(ctx, "passed clearing")
         for idx, row in enumerate(rows):
             try:
                 found, mapname = find_map_name(row[2], conn)
@@ -127,9 +117,8 @@ async def reload_requirements(conn: Connection, ctx=None, mapname=None) -> None:
                 print("except!", row)
     await update_files_provided(conn)
     if ctx:
-        await _send(ctx, "Done.")
+        await send(ctx, "Done.")
     conn.commit()
-
 
 async def update_files_provided(conn):
     """
@@ -206,7 +195,6 @@ async def update_files_provided(conn):
             select_sql = """update media_files set provided=? where file_id=?"""
             select(conn, select_sql, (0, row[0]))
 
-
 def get_bsps(maps_path: str) -> Iterator[str]:
     """
     yields all bsp files with extension stripped in the specified directory recursively
@@ -221,7 +209,6 @@ def get_bsps(maps_path: str) -> Iterator[str]:
         for filename in filenames:
             if filename.endswith(".bsp"):
                 yield os.path.join(root, filename[:-4])
-
 
 def reload_maps(conn: Connection) -> None:
     """
@@ -265,7 +252,6 @@ def reload_maps(conn: Connection) -> None:
             select(conn, insert_sql, (bsp.split("/")[-1], bsp, message))
             print("inserted", bsp)
 
-
 async def add_tags(tags: List[str], map_name: str, conn: Connection, ctx) -> None:
     """
     Adds specified tags to map if they're not yet specified
@@ -281,8 +267,7 @@ async def add_tags(tags: List[str], map_name: str, conn: Connection, ctx) -> Non
         where not exists
         (select * from tags where tag_name = ? and map_id = (select map_id from maps where map_path=?)) """
         select(conn, insert_sql, (tag, map_name, tag, map_name))
-    await _send(ctx, f"Added tags `{' '.join(tags)}` for map {map_name} if it wasn't set")
-
+    await send(ctx, f"Added tags `{' '.join(tags)}` for map {map_name} if it wasn't set")
 
 async def delete_tags(tags: List[str], map_name: str, conn: Connection, ctx) -> None:
     """
@@ -298,8 +283,7 @@ async def delete_tags(tags: List[str], map_name: str, conn: Connection, ctx) -> 
             map_id in (select map_id from maps where map_path=?) and 
             tag_name=? """
         select(conn, insert_sql, (map_name, tag))
-    await _send(ctx, f"Removed tags `{' '.join(tags)}` from map {map_name}")
-
+    await send(ctx, f"Removed tags `{' '.join(tags)}` from map {map_name}")
 
 async def add_mapshot(author, keyword: str, image, conn: Connection, ctx, bot):
     """
@@ -343,8 +327,7 @@ async def add_mapshot(author, keyword: str, image, conn: Connection, ctx, bot):
                             break
             await msg.delete()
 
-    await _send(ctx, result_message)
-
+    await send(ctx, result_message)
 
 def insert_mapshot_entry(conn, mapname):
     """

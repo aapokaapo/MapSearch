@@ -156,7 +156,7 @@ async def trivia_game(ctx: discord.ApplicationContext):
 # Upload command
 # ---------------------------------------------------------------------------
 
-@bot.slash_command(description="Upload a BSP file or a ZIP with the expected game file structure")
+@bot.slash_command(description="Upload a BSP file or a ZIP with the expected game file structure (admin only)")
 @in_allowed_channel()
 async def upload_map(
     ctx: discord.ApplicationContext,
@@ -164,6 +164,10 @@ async def upload_map(
     subfolder: str = "",
 ):
     """Upload a .bsp or .zip file. The zip must contain a maps/ directory at its root."""
+    if ctx.author.id not in admins:
+        await ctx.respond("Not authorized.", ephemeral=True)
+        return
+
     await ctx.defer(ephemeral=False)
 
     if not upload_path:
@@ -186,20 +190,19 @@ async def upload_map(
         await ctx.respond(f"✅ BSP saved as `maps/{(safe_subfolder + '/') if safe_subfolder else ''}{file.filename}`")
 
     else:  # .zip
-        # Save zip temporarily
         tmp_path = os.path.join("/tmp", file.filename)
         await file.save(tmp_path)
         try:
             with zipfile.ZipFile(tmp_path, "r") as zf:
-                # Validate: zip must contain at least one maps/*.bsp entry
                 members = zf.namelist()
                 bsp_entries = [m for m in members if m.startswith("maps/") and m.endswith(".bsp")]
                 if not bsp_entries:
                     await ctx.respond("Error: ZIP does not contain any `maps/*.bsp` files.")
                     return
-                # Reject any path-traversal attempts inside the zip
+                # Reject path-traversal by checking individual path components
+                from pathlib import PurePosixPath
                 for member in members:
-                    if os.path.isabs(member) or ".." in member:
+                    if os.path.isabs(member) or ".." in PurePosixPath(member).parts:
                         await ctx.respond("Error: ZIP contains unsafe paths.")
                         return
                 zf.extractall(upload_path)

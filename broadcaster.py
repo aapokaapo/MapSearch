@@ -1,18 +1,7 @@
+from utils import send
 import embedmaker
 import asyncio
 from db_io import *
-
-
-async def _send(ctx_or_channel, content=None, **kwargs):
-    if hasattr(ctx_or_channel, "respond"):
-        if not getattr(ctx_or_channel, "_responded", False):
-            await ctx_or_channel.respond(content, **kwargs)
-            ctx_or_channel._responded = True
-        else:
-            await ctx_or_channel.channel.send(content, **kwargs)
-    else:
-        await ctx_or_channel.send(content, **kwargs)
-
 
 async def broadcast(author, ctx, bot, admin_list, conn):
     numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
@@ -34,7 +23,6 @@ async def broadcast(author, ctx, bot, admin_list, conn):
                     index = numbers.index(res.emoji)
                     asyncio.create_task(server_status(author, servers[index][1], servers[index][2], conn, ctx, bot, admin_list))
 
-
 async def wait_for_reaction(author, msg, bot, admin_list):
     while True:
         res, user = await bot.wait_for('reaction_add',
@@ -44,7 +32,6 @@ async def wait_for_reaction(author, msg, bot, admin_list):
                 if res.emoji == "❌":
                     await msg.delete()
                     break
-
 
 async def server_status(author, ip, port, conn, ctx, bot, admin_list):
     select_sql = """select map_path from maps"""

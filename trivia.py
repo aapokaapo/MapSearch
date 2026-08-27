@@ -1,3 +1,4 @@
+from utils import send
 import asyncio
 import os
 import secrets
@@ -7,18 +8,6 @@ import embedmaker
 from db_io import *
 from collections import deque
 from config import topshot_path, trivia_path
-
-
-async def _send(ctx_or_channel, content=None, **kwargs):
-    if hasattr(ctx_or_channel, "respond"):
-        if not getattr(ctx_or_channel, "_responded", False):
-            await ctx_or_channel.respond(content, **kwargs)
-            ctx_or_channel._responded = True
-        else:
-            await ctx_or_channel.channel.send(content, **kwargs)
-    else:
-        await ctx_or_channel.send(content, **kwargs)
-
 
 async def trivia(conn, bot, ctx) -> None:
     """
@@ -50,8 +39,14 @@ async def trivia(conn, bot, ctx) -> None:
         shutil.copyfile(topshot_path + chosen_map + ".jpg", trivia_path + random_file_name + ".jpg")
         channel = ctx.channel if hasattr(ctx, "channel") else ctx
         msg = await channel.send(embed=embedmaker.trivia(random_file_name))
-        asyncio.ensure_future(wait_for_answer(msg, current_map.split("/")[-1], bot, conn, ctx))
+        task = asyncio.ensure_future(wait_for_answer(msg, current_map.split("/")[-1], bot, conn, ctx))
 
+        def _log_error(fut):
+            exc = fut.exception()
+            if exc:
+                print(f"Trivia error: {exc!r}")
+
+        task.add_done_callback(_log_error)
 
 async def wait_for_answer(msg, map_name, bot, conn, ctx) -> None:
     """
@@ -99,7 +94,6 @@ async def wait_for_answer(msg, map_name, bot, conn, ctx) -> None:
             embed.clear_fields()
             embed.add_field(name="Map name", value=hint, inline=False)
             await msg.edit(embed=embed)
-
 
 def clear_dir(folder: str) -> None:
     """
