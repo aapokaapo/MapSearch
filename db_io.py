@@ -9,15 +9,10 @@ def clear_requirements(conn):
     :param conn:
     :return:
     """
-    select_sql = """ drop table if exists media_files"""
-    rows2 = select(conn, select_sql, ())
-    select_sql = """create table media_files (file_id integer primary key, path text not null, type text not null, provided integer not null)"""
-    rows2 = select(conn, select_sql, ())
-    
-    select_sql = """ drop table if exists requirements"""
-    rows2 = select(conn, select_sql, ())
-    select_sql = """create table requirements (req_id integer primary key, map_id integer not null, file_id integer not null, foreign key (map_id) references maps (map_id), foreign key (file_id) references media_files(file_id))"""
-    rows2 = select(conn, select_sql, ())
+    select(conn, "drop table if exists media_files", ())
+    select(conn, "create table media_files (file_id integer primary key, path text not null, type text not null, provided integer not null)", ())
+    select(conn, "drop table if exists requirements", ())
+    select(conn, "create table requirements (req_id integer primary key, map_id integer not null, file_id integer not null, foreign key (map_id) references maps (map_id), foreign key (file_id) references media_files(file_id))", ())
 
 
 def create_connection(db_file):
@@ -38,9 +33,11 @@ def create_connection(db_file):
 
 def select(conn, select_sql, param):
     """
-    Query all rows in the tasks table
+    Execute a SQL statement and return all result rows.
     :param conn: the Connection object
-    :return:
+    :param select_sql: SQL statement string
+    :param param: tuple of bind parameters
+    :return: list of rows, or None on error
     """
     try:
         cur = conn.cursor()

@@ -1,7 +1,7 @@
 import discord
 import serverinfo
-from operator import itemgetter, attrgetter
-from config import trivia_path, public_mapshot_path, public_trivia_path, public_topshot_path, public_map_path
+from operator import attrgetter
+from config import public_mapshot_path, public_trivia_path, public_topshot_path, public_map_path
 
 
 async def split_string(maps_string):
@@ -149,7 +149,7 @@ def make_status(ip, port, map_memory=None):
             embed.add_field(name="Scores", value="{} is in the lead with {} kills".format(scoring_leader.name, scoring_leader.score),
                                 inline=False)
     embed.add_field(name="Map", value="{} - Time: {}".format(status.get("mapname"), status.get("TimeLeft")), inline=False)
-    if status.get("mapname")
+    if status.get("mapname"):
         for map in map_memory:
             if map.name.split('/')[-1] == status.get("mapname").split("/")[-1]:
                 embed.set_thumbnail(url=public_mapshot_path + map.name + ".jpg")

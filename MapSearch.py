@@ -1,255 +1,338 @@
 import asyncio
+import os
 import sys
+import zipfile
 
 import discord
-from config import TOKEN, users, admins, savefile, mapdata, channels, help_message
-from config import mapshot_path, database_path, map_path
+from discord.ext import commands
+from config import TOKEN, users, admins, channels, upload_path, database_path, map_path
 from collections import deque
-from db_queries import *
-from db_updates import *
-from trivia import *
-from map_requirements import *
-from broadcaster import *
+from db_io import create_connection, select, find_map_name
+from db_queries import print_map_search, print_map_info
+from db_updates import (
+    add_tags, delete_tags, add_mapshot, reload_maps, reload_requirements,
+    update_files_provided,
+)
+from map_requirements import print_requirements, print_required_files
+from broadcaster import broadcast, server_status
+from trivia import trivia
 
-sys.path.append("../image")  # Adds higher directory to python modules path.
-from Q2BSP import *
+sys.path.append("../image")
+from Q2BSP import Q2BSP
 
 
-client = discord.Client()
-already_seen = deque(maxlen=50)
+bot = discord.Bot()
+already_seen: deque = deque(maxlen=50)
 
 
-@client.event
-async def on_message(message):
-    author = message.author
-    command = message.content.split(" ")[0]
+def in_allowed_channel():
+    async def predicate(ctx: discord.ApplicationContext):
+        if ctx.channel_id not in channels:
+            await ctx.respond("Commands are not allowed in this channel.", ephemeral=True)
+            return False
+        return True
+    return commands.check(predicate)
 
-    if not command.startswith("!"):
-        pass
 
-    # create a database connection
+# ---------------------------------------------------------------------------
+# Public commands
+# ---------------------------------------------------------------------------
+
+@bot.slash_command(description="Search for maps by keyword (name, message or tag)")
+@in_allowed_channel()
+async def mapsearch(ctx: discord.ApplicationContext, keyword: str):
     conn = create_connection(database_path)
-    # don't respond to own messages
-    if message.author == client.user:
-        pass
+    await ctx.defer()
+    await print_map_search(keyword, conn, ctx)
+    conn.commit()
 
-    # don't respond to messages in wrong channel
-    elif message.channel.id not in channels:
-        pass
 
+@bot.slash_command(description="Show map info for a specific map, subdirectory, or random")
+@in_allowed_channel()
+async def mapinfo(ctx: discord.ApplicationContext, keyword: str = None):
+    conn = create_connection(database_path)
+    await ctx.defer()
+    await print_map_info(keyword, conn, already_seen, ctx)
+    conn.commit()
+
+
+@bot.slash_command(description="Show database file statistics")
+@in_allowed_channel()
+async def files(ctx: discord.ApplicationContext):
+    conn = create_connection(database_path)
+    await ctx.defer()
+    queries = [
+        ("requiredfile", 1), ("requiredfile", 0),
+        ("texture", 1), ("texture", 0),
+        ("externalfile", 1), ("externalfile", 0),
+        ("linkedfile", 1), ("linkedfile", 0),
+        ("mapshot", 1), ("mapshot", 0),
+    ]
+    results = {}
+    for ftype, provided in queries:
+        key = (ftype, provided)
+        results[key] = select(conn, "select * from media_files where type=? and provided=?", (ftype, provided))
+    map_entries = select(conn, "select * from maps", ())
+    await ctx.respond(
+        f"**Database file entries:**\n"
+        f"Number of maps: {len(map_entries)}\n"
+        f"Number of required_files: {len(results[('requiredfile',1)])} with {len(results[('requiredfile',0)])} missing\n"
+        f"Number of textures: {len(results[('texture',1)])} with {len(results[('texture',0)])} missing\n"
+        f"Number of models, skins, sound files: {len(results[('externalfile',1)])} with {len(results[('externalfile',0)])} missing\n"
+        f"Number of model-associated files: {len(results[('linkedfile',1)])} with {len(results[('linkedfile',0)])} missing"
+    )
+    conn.commit()
+
+
+@bot.slash_command(description="Update which required files are provided by the server")
+@in_allowed_channel()
+async def updatefiles(ctx: discord.ApplicationContext):
+    conn = create_connection(database_path)
+    await ctx.defer()
+    await update_files_provided(conn)
+    conn.commit()
+    await ctx.respond("Done updating")
+
+
+@bot.slash_command(description="Show required files for a map from the database")
+@in_allowed_channel()
+async def requiredfiles(ctx: discord.ApplicationContext, map_name: str):
+    conn = create_connection(database_path)
+    await ctx.defer()
+    found, mapname = find_map_name(map_name, conn)
+    if found:
+        await print_required_files(mapname, conn, ctx)
     else:
-        if conn is not None:
-            print(already_seen)
-            channel = message.channel
-
-            if command == '!mapsearch':
-                # prints all maps that match the specified pattern (in name, message or tags)
-                msg = message.content.split()
-                try:
-                    asyncio.create_task(print_map_search(msg[1], conn, channel))
-                except IndexError:
-                    await channel.send("Error! No keyword!")
-
-            elif command == '!mapinfo':
-                msg = message.content.split()
-                keyword = None
-                try:
-                    keyword = msg[1]
-                except IndexError:
-                    pass
-                asyncio.create_task(print_map_info(keyword, conn, already_seen, channel))
-
-            elif command == "!help":
-                await channel.send(help_message)
-
-            elif command == "!port":
-                select_sql = """select * from maps"""
-                map_memory = select(conn, select_sql, ())
-                print(map_memory)
-                for current_map in map_memory:
-                    if not any(current_map[2].startswith(x) for x in ("beta", "inprogress", "tutorials")):
-                        new_path = current_map[2].split("/")[1]
-                        select_sql = """update maps set map_path=? where map_id=?"""
-                        select(conn, select_sql, (new_path, current_map[0]))
-                        # await channel.send("old path: " + current_map[2] + " new path: " + "/".join(current_map[2].split("/")[1:]))
-                    else:
-                        print(current_map[2])
+        await ctx.respond("Error: Map not found!")
+    conn.commit()
 
 
-            elif command == "!mapshot":
-                # check if user authorized
-                if message.author.id in users:
-                    msg = message.content.split()
-                    try:
-                        keyword = msg[1]
-                    except IndexError:
-                        await channel.send("Error! No map name given!")
+@bot.slash_command(description="Show live-computed requirements for a map")
+@in_allowed_channel()
+async def requirements(ctx: discord.ApplicationContext, map_name: str):
+    conn = create_connection(database_path)
+    await ctx.defer()
+    found, mapname = find_map_name(map_name, conn)
+    if found:
+        my_map = Q2BSP(map_path + mapname + ".bsp")
+        await print_requirements(mapname, ctx, my_map)
+    else:
+        await ctx.respond("Error: Map not found!")
+    conn.commit()
+
+
+@bot.slash_command(description="Show populated servers")
+@in_allowed_channel()
+async def broadcast_servers(ctx: discord.ApplicationContext):
+    conn = create_connection(database_path)
+    await ctx.defer()
+    await broadcast(ctx.author, ctx, bot, admins, conn)
+    conn.commit()
+
+
+@bot.slash_command(description="Broadcast a server by direct IP and port")
+@in_allowed_channel()
+async def scores(ctx: discord.ApplicationContext, address: str):
+    conn = create_connection(database_path)
+    await ctx.defer()
+    try:
+        ip, port = address.split(":")[0], int(address.split(":")[-1])
+        asyncio.create_task(server_status(ctx.author, ip, port, conn, ctx, bot, admins))
+    except (ValueError, IndexError):
+        await ctx.respond("Error! Invalid address format. Use `ip:port`.")
+    conn.commit()
+
+
+@bot.slash_command(description="Start a map trivia game")
+@in_allowed_channel()
+async def trivia_game(ctx: discord.ApplicationContext):
+    conn = create_connection(database_path)
+    await ctx.defer()
+    await trivia(conn, bot, ctx)
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Upload command
+# ---------------------------------------------------------------------------
+
+@bot.slash_command(description="Upload a BSP file or a ZIP with the expected game file structure (admin only)")
+@in_allowed_channel()
+async def upload_map(
+    ctx: discord.ApplicationContext,
+    file: discord.Attachment,
+    subfolder: str = "",
+):
+    """Upload a .bsp or .zip file. The zip must contain a maps/ directory at its root."""
+    if ctx.author.id not in admins:
+        await ctx.respond("Not authorized.", ephemeral=True)
+        return
+
+    await ctx.defer(ephemeral=False)
+
+    if not upload_path:
+        await ctx.respond("Error: upload_path is not configured on the server.")
+        return
+
+    filename = file.filename.lower()
+    if not (filename.endswith(".bsp") or filename.endswith(".zip")):
+        await ctx.respond("Error: Only `.bsp` and `.zip` files are accepted.")
+        return
+
+    # Sanitise subfolder to prevent path traversal
+    safe_subfolder = os.path.normpath(subfolder).lstrip("/\\").replace("..", "")
+
+    if filename.endswith(".bsp"):
+        dest_dir = os.path.join(upload_path, "maps", safe_subfolder) if safe_subfolder else os.path.join(upload_path, "maps")
+        os.makedirs(dest_dir, exist_ok=True)
+        dest_path = os.path.join(dest_dir, file.filename)
+        await file.save(dest_path)
+        await ctx.respond(f"✅ BSP saved as `maps/{(safe_subfolder + '/') if safe_subfolder else ''}{file.filename}`")
+
+    else:  # .zip
+        tmp_path = os.path.join("/tmp", file.filename)
+        await file.save(tmp_path)
+        try:
+            with zipfile.ZipFile(tmp_path, "r") as zf:
+                members = zf.namelist()
+                bsp_entries = [m for m in members if m.startswith("maps/") and m.endswith(".bsp")]
+                if not bsp_entries:
+                    await ctx.respond("Error: ZIP does not contain any `maps/*.bsp` files.")
+                    return
+                # Reject path-traversal by checking individual path components
+                from pathlib import PurePosixPath
+                for member in members:
+                    if os.path.isabs(member) or ".." in PurePosixPath(member).parts:
+                        await ctx.respond("Error: ZIP contains unsafe paths.")
                         return
-
-                    if message.attachments:
-                        image = message.attachments
-                        await add_mapshot(author, keyword, image, conn, channel, client)
-                    else:
-                        await channel.send("where is the pic?")
-
-            elif command == "!requirements":
-                msg = message.content.split()
-                try:
-                    keyword = msg[1]
-                    found, map_name = find_map_name(keyword, conn)
-                    if found:
-                        my_map = Q2BSP(map_path + map_name + ".bsp")
-                        await print_requirements(map_name, channel, my_map)
-                    else:
-                        await channel.send("Error: Map not found!")
-                except IndexError:
-                    await channel.send("Error! No map name given!")
-
-            elif command == "!requiredfiles":
-                msg = message.content.split()
-                try:
-                    keyword = msg[1]
-                    found, map_name = find_map_name(keyword, conn)
-                    if found:
-                        await print_required_files(map_name, conn, channel)
-                    else:
-                        await channel.send("Error: Map not found!")
-                except IndexError:
-                    await channel.send("Error! No map name given!")
-
-            elif command == "!addtag":
-                if message.author.id in users:
-                    msg = message.content.replace("!addtag ", "").split()
-                    if not len(msg) > 1:
-                        await channel.send(
-                            "Error! Invalid input length - Usage: `!addtag <map_name> <tag 1> ... <tag n>`")
-                    else:
-                        found, map_name = find_map_name(msg[0], conn)
-                        if found:
-                            await add_tags(msg[1:], map_name, conn, channel)
-                        else:
-                            await channel.send("Error! Couldn't find the map")
-                else:
-                    await channel.send("Unauthorized user!")
-
-            elif command == "!deltag":
-                if message.author.id in users:
-                    msg = message.content.replace("!deltag ", "").split()
-                    if not len(msg) > 1:
-                        await channel.send(
-                            "Error! Invalid input length - Usage: `!deltag <map_name> <tag 1> ... <tag n>`")
-                    else:
-                        found, map_name = find_map_name(msg[0], conn)
-                        if found:
-                            await delete_tags(msg[1:], map_name, conn, channel)
-                        else:
-                            await channel.send("Error! Couldn't find the map")
-                else:
-                    await channel.send("Unauthorized user!")
-
-            elif command == "!reloadmaps":
-                if message.author.id in admins:
-                    await channel.send("Reloading maps! Please hold...")
-                    reload_maps(conn)
-                    await channel.send("Done!")
-
-            elif command == "!reloadrequirements":
-                if message.author.id in admins:
-                    msg = message.content.replace("!reloadrequirements", "").strip().split(" ")
-                    if msg:
-                        await channel.send("reloading requirements for "+msg[0])
-                        await reload_requirements(conn, channel, mapname=msg[0])
-                    else:
-                        await reload_requirements(conn, channel)
-
-                else:
-                    await channel.send("not authorized")
-
-            elif command == "!test":
-                found, mapname = find_map_name("beta/tlc2dm", conn)
-                if found:
-                    await channel.send("mapname of eclissi2 is "+ mapname)
-
-            elif command == "!op":
-                if message.author.id in admins:
-                    try:
-                        user = message.mentions[0]
-                        if user.id not in users:
-                            users.append(user.id)
-                            await channel.send("{} added to users!".format(user.display_name))
-                        else:
-                            await channel.send("{} already in users!".format(user.display_name))
-                    except IndexError:
-                        await channel.send("You didn't mention anyone!")
-
-            elif command == "!deop":
-                if message.author.id in admins:
-                    try:
-                        user = message.mentions[0]
-                        if user.id in users:
-                            users.remove(user.id)
-                            await channel.send("{} removed from users!".format(user.display_name))
-                        else:
-                            await channel.send("{} not in users!".format(user.display_name))
-                    except IndexError:
-                        await channel.send("You didn't mention anyone!")
-
-            elif command == "!files":
-                select_sql = """select * from media_files where type = ? and provided=1"""
-                requiredfiles1 = select(conn, select_sql, ("requiredfile",))
-                select_sql = """select * from media_files where type = ? and provided=0"""
-                requiredfiles0 = select(conn, select_sql, ("requiredfile",))
-                select_sql = """select * from media_files where type = ? and provided=1"""
-                textures1 = select(conn, select_sql, ("texture",))
-                select_sql = """select * from media_files where type = ? and provided=0"""
-                textures0 = select(conn, select_sql, ("texture",))
-                select_sql = """select * from media_files where type = ? and provided=1"""
-                externalfiles1 = select(conn, select_sql, ("externalfile",))
-                select_sql = """select * from media_files where type = ? and provided=0"""
-                externalfiles0 = select(conn, select_sql, ("externalfile",))
-                select_sql = """select * from media_files where type = ? and provided=1"""
-                linkedfiles1 = select(conn, select_sql, ("linkedfile",))
-                select_sql = """select * from media_files where type = ? and provided=0"""
-                linkedfiles0 = select(conn, select_sql, ("linkedfile",))
-                select_sql = """select * from media_files where type = ? and provided=1"""
-                mapshot1 = select(conn, select_sql, ("mapshot",))
-                select_sql = """select * from media_files where type = ? and provided=0"""
-                mapshots0 = select(conn, select_sql, ("mapshot",))
-                select_sql = """select * from maps"""
-                map_entries = select(conn, select_sql, ())
-                await channel.send(
-                    f"**Database file entries:**\nNumber of maps: {len(map_entries)}\nNumber of required_files: {len(requiredfiles1)} with {len(requiredfiles0)} missing\nNumber of textures: {len(textures1)} with {len(textures0)} missing\nNumber of models, skins, sound files: {len(externalfiles1)} with {len(externalfiles0)} missing\nNumber of model-associated files: {len(linkedfiles1)} with {len(linkedfiles0)} missing")
-
-            elif command == "!updatefiles":
-                await update_files_provided(conn)
-                await channel.send("Done updating")
-
-            elif command == "!scores":
-                msg = message.content.split()
-                try:
-                    addr = msg[1]
-                    ip, port = addr.split(":")[0], int(addr.split(":")[-1])
-                    asyncio.create_task(server_status(author, ip, port, conn, channel, client, admins))
-
-                except IndexError:
-                    await channel.send("Error! You didn't give ip")
-
-            elif command == "!broadcast":
-                asyncio.create_task(broadcast(author, channel, client, admins, conn))
-
-            elif command == "!trivia":
-                await trivia(conn, client, channel)
-
-            conn.commit()
-        else:
-            print("Error! cannot create the database connection.")
+                zf.extractall(upload_path)
+            await ctx.respond(
+                f"✅ ZIP extracted to upload directory. Found BSP files:\n"
+                + "\n".join(f"`{e}`" for e in bsp_entries[:20])
+                + ("\n…and more" if len(bsp_entries) > 20 else "")
+            )
+        except zipfile.BadZipFile:
+            await ctx.respond("Error: The uploaded file is not a valid ZIP archive.")
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
 
-@client.event
+# ---------------------------------------------------------------------------
+# User commands (require user permission)
+# ---------------------------------------------------------------------------
+
+@bot.slash_command(description="Add a mapshot image for a map")
+@in_allowed_channel()
+async def mapshot(ctx: discord.ApplicationContext, map_name: str, image: discord.Attachment):
+    if ctx.author.id not in users:
+        await ctx.respond("Unauthorized user!", ephemeral=True)
+        return
+    conn = create_connection(database_path)
+    await ctx.defer()
+    await add_mapshot(ctx.author, map_name, [image], conn, ctx, bot)
+    conn.commit()
+
+
+@bot.slash_command(description="Add tags to a map")
+@in_allowed_channel()
+async def addtag(ctx: discord.ApplicationContext, map_name: str, tags: str):
+    if ctx.author.id not in users:
+        await ctx.respond("Unauthorized user!", ephemeral=True)
+        return
+    conn = create_connection(database_path)
+    tag_list = tags.split()
+    await ctx.defer()
+    found, mapname = find_map_name(map_name, conn)
+    if found:
+        await add_tags(tag_list, mapname, conn, ctx)
+    else:
+        await ctx.respond("Error! Couldn't find the map")
+    conn.commit()
+
+
+@bot.slash_command(description="Remove tags from a map")
+@in_allowed_channel()
+async def deltag(ctx: discord.ApplicationContext, map_name: str, tags: str):
+    if ctx.author.id not in users:
+        await ctx.respond("Unauthorized user!", ephemeral=True)
+        return
+    conn = create_connection(database_path)
+    tag_list = tags.split()
+    await ctx.defer()
+    found, mapname = find_map_name(map_name, conn)
+    if found:
+        await delete_tags(tag_list, mapname, conn, ctx)
+    else:
+        await ctx.respond("Error! Couldn't find the map")
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Admin commands
+# ---------------------------------------------------------------------------
+
+@bot.slash_command(description="Reload map database from file system (admin only)")
+@in_allowed_channel()
+async def reloadmaps(ctx: discord.ApplicationContext):
+    if ctx.author.id not in admins:
+        await ctx.respond("Not authorized.", ephemeral=True)
+        return
+    conn = create_connection(database_path)
+    await ctx.defer()
+    await ctx.respond("Reloading maps! Please hold...")
+    reload_maps(conn)
+    conn.commit()
+    await ctx.channel.send("Done!")
+
+
+@bot.slash_command(description="Reload map requirements table (admin only)")
+@in_allowed_channel()
+async def reloadrequirements(ctx: discord.ApplicationContext, map_name: str = None):
+    if ctx.author.id not in admins:
+        await ctx.respond("Not authorized.", ephemeral=True)
+        return
+    conn = create_connection(database_path)
+    await ctx.defer()
+    await reload_requirements(conn, ctx, mapname=map_name)
+    conn.commit()
+
+
+@bot.slash_command(description="Grant user permissions to a member (admin only)")
+@in_allowed_channel()
+async def op(ctx: discord.ApplicationContext, member: discord.Member):
+    if ctx.author.id not in admins:
+        await ctx.respond("Not authorized.", ephemeral=True)
+        return
+    if member.id not in users:
+        users.append(member.id)
+        await ctx.respond(f"{member.display_name} added to users!")
+    else:
+        await ctx.respond(f"{member.display_name} already in users!")
+
+
+@bot.slash_command(description="Revoke user permissions from a member (admin only)")
+@in_allowed_channel()
+async def deop(ctx: discord.ApplicationContext, member: discord.Member):
+    if ctx.author.id not in admins:
+        await ctx.respond("Not authorized.", ephemeral=True)
+        return
+    if member.id in users:
+        users.remove(member.id)
+        await ctx.respond(f"{member.display_name} removed from users!")
+    else:
+        await ctx.respond(f"{member.display_name} not in users!")
+
+
+# ---------------------------------------------------------------------------
+# Bot lifecycle
+# ---------------------------------------------------------------------------
+
+@bot.event
 async def on_ready():
-    print('Success. Logged in as', client.user.name, "with id ", client.user.id)
-    print('------')
-    # await update_status()
+    print(f"Logged in as {bot.user.name} (id: {bot.user.id})")
+    print("------")
 
 
-client.run(TOKEN)
+bot.run(TOKEN)
+
