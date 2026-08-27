@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 import zipfile
@@ -14,11 +15,6 @@ from models import Map, Tag
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking"))
 
 app = FastAPI(title="MapSearch API")
-
-# Serve the frontend
-_FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
-if os.path.isdir(_FRONTEND_DIR):
-    app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
 
 
 # ---------------------------------------------------------------------------
@@ -145,3 +141,9 @@ def export_bsp(map_name: str, session: Session = Depends(get_session)):
         return {"success": True, "message": f"Topshot generated for {map_name}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"BSP processing failed: {str(e)}")
+
+
+# Serve the frontend after API routes so it does not shadow `/api/*`.
+_FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+if os.path.isdir(_FRONTEND_DIR):
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
