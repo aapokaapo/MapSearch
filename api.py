@@ -271,8 +271,8 @@ def _bsp_to_obj_stream(parsed: dict):
             tri_vt = []
             for vi in tri:
                 x, y, z = vertices[vi]
-                u = x * s[0] + y * s[1] + z * s[2] + s[3]
-                uv_v = -(x * tv[0] + y * tv[1] + z * tv[2] + tv[3])
+                u = (x * s[0] + y * s[1] + z * s[2] + s[3]) / _OBJ_UV_SCALE
+                uv_v = -((x * tv[0] + y * tv[1] + z * tv[2] + tv[3]) / _OBJ_UV_SCALE)
                 yield f"vt {u:.6f} {uv_v:.6f}\n"
                 tri_vt.append(vt_idx)
                 vt_idx += 1
@@ -287,6 +287,7 @@ _SURF_TRANS66 = 0x0020
 _SURF_NODRAW = 0x0080
 _CULLED_TEXTURE_NAMES = {"sky", "hint", "clip", "skip"}
 _BROWSER_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp")
+_OBJ_UV_SCALE = 256.0  # default texel-to-UV divisor for OBJ export (no image size available)
 
 
 def _bsp_lump(data: bytes, idx: int) -> tuple[int, int]:

@@ -132,7 +132,7 @@ async function buildMaterials(materialDefs, base) {
       map,
       side: def.opacity < 1.0 ? THREE.DoubleSide : THREE.FrontSide,
       transparent: def.opacity < 1.0,
-      opacity: def.opacity != null ? def.opacity : 1.0,
+      opacity: def.opacity ?? 1.0,
       wireframe: false
     });
   }));
