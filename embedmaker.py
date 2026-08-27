@@ -149,7 +149,7 @@ def make_status(ip, port, map_memory=None):
             embed.add_field(name="Scores", value="{} is in the lead with {} kills".format(scoring_leader.name, scoring_leader.score),
                                 inline=False)
     embed.add_field(name="Map", value="{} - Time: {}".format(status.get("mapname"), status.get("TimeLeft")), inline=False)
-    if status.get("mapname")
+    if status.get("mapname"):
         for map in map_memory:
             if map.name.split('/')[-1] == status.get("mapname").split("/")[-1]:
                 embed.set_thumbnail(url=public_mapshot_path + map.name + ".jpg")

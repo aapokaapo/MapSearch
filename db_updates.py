@@ -3,9 +3,8 @@ import sys
 
 from db_io import *
 import os
-from config import TOKEN, mapshot_path, users, admins, savefile, mapdata, channels, help_message
+from config import TOKEN, mapshot_path, users, admins, channels
 from config import texture_path, env_path, pball_path, map_path
-from discord.channel import TextChannel
 from sqlite3 import Connection
 from typing import List, Iterator
 from skm import *
@@ -16,6 +15,17 @@ from Q2BSP import *
 
 sys.path.append("../md2-importer")  # Adds higher directory to python modules path.
 from md2 import *
+
+
+async def _send(ctx_or_channel, content=None, **kwargs):
+    if hasattr(ctx_or_channel, "respond"):
+        if not getattr(ctx_or_channel, "_responded", False):
+            await ctx_or_channel.respond(content, **kwargs)
+            ctx_or_channel._responded = True
+        else:
+            await ctx_or_channel.channel.send(content, **kwargs)
+    else:
+        await ctx_or_channel.send(content, **kwargs)
 
 
 async def insert_requirements(conn, mapname):
@@ -68,47 +78,42 @@ async def insert_requirements(conn, mapname):
             _ = select(conn, select_sql, (mapname, req))
 
 
-async def reload_requirements(conn: Connection, channel: TextChannel = None, mapname = None) -> None:
+async def reload_requirements(conn: Connection, ctx=None, mapname=None) -> None:
     """
     Wipes the media_files and requirements tables and re-calculates all the requirements
     :param conn:
-    :param channel:
+    :param ctx:
+    :param mapname:
     :return:
     """
     if mapname:
-        if channel:
-            await channel.send("mapname "+mapname)
+        if ctx:
+            await _send(ctx, "mapname " + mapname)
         try:
             found, mapname = find_map_name(mapname, conn)
             if found:
-                # delete all requirements of the map
                 requirements_delete_sql = """delete from requirements where map_id in (select map_id from maps where map_path = ?)"""
-                # delete all media_files entries that are only required by the specified map (the query could probably be improved)
                 specific_files_delete_sql = """delete from media_files where path in (select path from (select f.path, m.map_path,count(m.map_path) as cnt from media_files f join requirements r on f.file_id=r.file_id join maps m on r.map_id = m.map_id group by f.path) where path in (select path from media_files where file_id in (select file_id from requirements where map_id in (select map_id from maps where map_path = ?))) and cnt=1);"""
-
-                # execute the queries
                 select(conn, requirements_delete_sql, (mapname, ))
                 select(conn, specific_files_delete_sql, (mapname, ))
-
                 await insert_requirements(conn, mapname)
             else:
-                if channel:
-                    await channel.send("Error: Map "+mapname+" not found!")
+                if ctx:
+                    await _send(ctx, "Error: Map " + mapname + " not found!")
                 else:
                     return -1
-        except:
-            if channel:
-                await channel.send("An unknown error occurred!")
+        except Exception:
+            if ctx:
+                await _send(ctx, "An unknown error occurred!")
             else:
                 return -2
     else:
         select_sql = """ select * from maps"""
         rows = select(conn, select_sql, ())
-        await channel.send("Reloading requirements of " + str(len(rows)) + " files ...")
-
+        await _send(ctx, "Reloading requirements of " + str(len(rows)) + " files ...")
         clear_requirements(conn)
         conn.commit()
-        await channel.send("passed clearing")
+        await _send(ctx, "passed clearing")
         for idx, row in enumerate(rows):
             try:
                 found, mapname = find_map_name(row[2], conn)
@@ -118,11 +123,11 @@ async def reload_requirements(conn: Connection, channel: TextChannel = None, map
                 else:
                     print("not found")
                 conn.commit()
-            except:
+            except Exception:
                 print("except!", row)
     await update_files_provided(conn)
-    if channel:
-        await channel.send("Done.")
+    if ctx:
+        await _send(ctx, "Done.")
     conn.commit()
 
 
@@ -261,13 +266,13 @@ def reload_maps(conn: Connection) -> None:
             print("inserted", bsp)
 
 
-async def add_tags(tags: List[str], map_name: str, conn: Connection, channel: TextChannel) -> None:
+async def add_tags(tags: List[str], map_name: str, conn: Connection, ctx) -> None:
     """
     Adds specified tags to map if they're not yet specified
     :param tags:
     :param map_name:
     :param conn:
-    :param channel:
+    :param ctx:
     :return:
     """
     for tag in tags:
@@ -276,16 +281,16 @@ async def add_tags(tags: List[str], map_name: str, conn: Connection, channel: Te
         where not exists
         (select * from tags where tag_name = ? and map_id = (select map_id from maps where map_path=?)) """
         select(conn, insert_sql, (tag, map_name, tag, map_name))
-    await channel.send(f"Added tags `{' '.join(tags)}` for map {map_name} if it wasn't set")
+    await _send(ctx, f"Added tags `{' '.join(tags)}` for map {map_name} if it wasn't set")
 
 
-async def delete_tags(tags: List[str], map_name: str, conn: Connection, channel: TextChannel) -> None:
+async def delete_tags(tags: List[str], map_name: str, conn: Connection, ctx) -> None:
     """
     Deletes specified tags from map if they're specified
     :param tags:
     :param map_name:
     :param conn:
-    :param channel:
+    :param ctx:
     :return:
     """
     for tag in tags:
@@ -293,53 +298,52 @@ async def delete_tags(tags: List[str], map_name: str, conn: Connection, channel:
             map_id in (select map_id from maps where map_path=?) and 
             tag_name=? """
         select(conn, insert_sql, (map_name, tag))
-    await channel.send(f"Removed tags `{' '.join(tags)}` from map {map_name}")
+    await _send(ctx, f"Removed tags `{' '.join(tags)}` from map {map_name}")
 
 
-async def add_mapshot(author, keyword: str, image, conn: Connection, channel: TextChannel, client):
+async def add_mapshot(author, keyword: str, image, conn: Connection, ctx, bot):
     """
     adds mapshot and database entry
     :param author:
     :param keyword:
     :param image:
     :param conn:
-    :param channel:
-    :param client:
+    :param ctx:
+    :param bot:
     :return:
     """
-    message = "Couldn't find the map you're uploading mapshot for"
+    result_message = "Couldn't find the map you're uploading mapshot for"
 
-    (found, mapname) = find_map_name(keyword, conn)  # there might be multiple hits?
+    (found, mapname) = find_map_name(keyword, conn)
 
     if found:
-        # check if mapshot for the map already exists
         if not os.path.exists(mapshot_path + mapname + ".jpg"):
             await image[0].save(mapshot_path + mapname + ".jpg")
-            message = "Image saved as {}.jpg".format(mapname)
+            result_message = "Image saved as {}.jpg".format(mapname)
             insert_mapshot_entry(conn, mapname)
-
         else:
-            # ask user to confirm overwrite
+            channel = ctx.channel if hasattr(ctx, "channel") else ctx
             msg = await channel.send("{}.jpg already exists. Do you want to overwrite it?".format(keyword))
             await msg.add_reaction(emoji="✔️")
             await msg.add_reaction(emoji="❌")
-            # wait until reaction from the user who executed command
             while True:
-                res, user = await client.wait_for('reaction_add',
-                                                  check=lambda reaction, user: reaction.emoji == '✔️' or '❌')
+                res, user = await bot.wait_for(
+                    'reaction_add',
+                    check=lambda reaction, user: reaction.emoji in ('✔️', '❌'),
+                )
                 if res.message.id == msg.id:
                     if user == author or user.id in admins:
                         if res.emoji == "✔️":
                             await image[0].save(mapshot_path + mapname + ".jpg")
-                            message = "Image saved as {}.jpg".format(mapname)
+                            result_message = "Image saved as {}.jpg".format(mapname)
                             insert_mapshot_entry(conn, mapname)
                             break
                         else:
-                            message = "Image not saved"
+                            result_message = "Image not saved"
                             break
             await msg.delete()
 
-    await channel.send(message)
+    await _send(ctx, result_message)
 
 
 def insert_mapshot_entry(conn, mapname):

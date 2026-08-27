@@ -9,15 +9,25 @@ from collections import deque
 from config import topshot_path, trivia_path
 
 
-async def trivia(conn, client, channel) -> None:
+async def _send(ctx_or_channel, content=None, **kwargs):
+    if hasattr(ctx_or_channel, "respond"):
+        if not getattr(ctx_or_channel, "_responded", False):
+            await ctx_or_channel.respond(content, **kwargs)
+            ctx_or_channel._responded = True
+        else:
+            await ctx_or_channel.channel.send(content, **kwargs)
+    else:
+        await ctx_or_channel.send(content, **kwargs)
+
+
+async def trivia(conn, bot, ctx) -> None:
     """
     picks map, creates copy with hash name and starts guessing game
     :param conn:
-    :param client:
-    :param channel:
+    :param bot:
+    :param ctx:
     :return:
     """
-    # get list of all maps (as path relative to maps/)
     select_sql = """select map_path from maps"""
     map_memory = [a for b in select(conn, select_sql, ()) for a in b]
 
@@ -38,50 +48,52 @@ async def trivia(conn, client, channel) -> None:
             os.makedirs(trivia_path)
         clear_dir(trivia_path)
         shutil.copyfile(topshot_path + chosen_map + ".jpg", trivia_path + random_file_name + ".jpg")
+        channel = ctx.channel if hasattr(ctx, "channel") else ctx
         msg = await channel.send(embed=embedmaker.trivia(random_file_name))
-        future = asyncio.ensure_future(wait_for_answer(msg, current_map.split("/")[-1], client, conn, channel))
+        asyncio.ensure_future(wait_for_answer(msg, current_map.split("/")[-1], bot, conn, ctx))
 
 
-async def wait_for_answer(msg, map, client, conn, channel) -> None:
+async def wait_for_answer(msg, map_name, bot, conn, ctx) -> None:
     """
     Guessing loop for running trivia game
     :param msg:
-    :param map:
-    :param client:
+    :param map_name:
+    :param bot:
     :param conn:
-    :param channel:
+    :param ctx:
     :return:
     """
+    channel = ctx.channel if hasattr(ctx, "channel") else ctx
     x = 0
     i = 0
     hint = ""
     while True:
-        message = await client.wait_for('message', check=lambda message: message.channel.id == msg.channel.id)
+        message = await bot.wait_for('message', check=lambda m: m.channel.id == msg.channel.id)
         x += 1
-        if map in message.content.lower().split():
-            await msg.channel.send("Correct! The answer was {}".format(map))
-            await trivia(conn, client, channel)
+        if map_name in message.content.lower().split():
+            await channel.send("Correct! The answer was {}".format(map_name))
+            await trivia(conn, bot, ctx)
             await asyncio.sleep(10)
             await msg.delete()
             break
         elif x == 50:
-            await msg.channel.send("Wow nobody got it right? The answer was {}. Trivia has ended.".format(map))
+            await channel.send("Wow nobody got it right? The answer was {}. Trivia has ended.".format(map_name))
             await msg.delete()
             break
         elif message.content.lower() == "pass":
-            await msg.channel.send("The answer was {}. -10 points to {}".format(map, random.choice(
+            await channel.send("The answer was {}. -10 points to {}".format(map_name, random.choice(
                 ["Gryffindor", "John Cena", "your mom", "you, you idiot", "Gandalf", "DirtyTaco", "whoa", " everyone",
                  "James Bond", "Sub-Zero", "Spyro the Dragon", "BlueBalls Studios", "DPBot01"])))
             await msg.delete()
-            await trivia(conn, client, channel)
+            await trivia(conn, bot, ctx)
             break
         elif message.content.lower() == "quit":
-            await msg.channel.send("Trivia has ended!")
+            await channel.send("Trivia has ended!")
             await msg.delete()
             break
         elif message.content.lower() == "hint":
-            if i < len(map):
-                hint += map[i]
+            if i < len(map_name):
+                hint += map_name[i]
             i += 1
             embed = msg.embeds[0]
             embed.clear_fields()

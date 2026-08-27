@@ -1,65 +1,66 @@
-# MapSearch (Node.js)
+# MapSearch
 
-Modernized Discord bot for Digital Paintball 2 map discovery and metadata management.
+Discord bot for Digital Paintball 2 map discovery and metadata management — built with **py-cord** and slash commands.
 
-## What changed
-
-- Migrated the bot runtime from Python to Node.js.
-- Replaced legacy `!chat` commands with Discord slash commands.
-- Added structured command permissions (admin/user/public) through environment-based ID lists.
-- Added safer command handling, explicit error responses, and central configuration validation.
-- Kept SQLite as the source of truth (`sqlite_mapdata.db`).
-
-## Supported slash commands
+## Slash commands
 
 ### Public
-- `/help`
-- `/mapsearch keyword`
-- `/mapinfo [map]`
-- `/files`
-- `/requiredfiles map`
+- `/mapsearch keyword` — search maps by name, message or tag
+- `/mapinfo [map]` — show map info (or random if omitted); supports `beta`, `inprogress`, `tutorials` as sub-directory keywords
+- `/files` — database file statistics
+- `/requiredfiles map` — show required files from the database for a map
+- `/requirements map` — compute required files live from the BSP
+- `/broadcast_servers` — list populated game servers
+- `/scores address` — broadcast a server by `ip:port`
+- `/trivia_game` — start a map trivia game
 
-### Authorized users (`USER_IDS` or admins)
-- `/addtag map tags`
-- `/deltag map tags`
-- `/mapshot map image`
+### Authorized users
+- `/addtag map tags` — add space-separated tags to a map
+- `/deltag map tags` — remove tags from a map
+- `/mapshot map image` — upload a mapshot image
 
-### Admins (`ADMIN_IDS`)
-- `/uploadmap file` *(accepts `.bsp` or `.zip`; ZIP must contain game-root folders like `maps/`, `textures/`, etc.)*
-- `/updatefiles`
-- `/reloadmaps`
-- `/reloadrequirements` *(currently disabled until a Node-compatible BSP dependency parser is integrated)*
+### Admins
+- `/upload_map file [subfolder]` — upload a `.bsp` or `.zip` file with the expected game file structure
+- `/updatefiles` — update which required files are provided by the server
+- `/reloadmaps` — sync the map database with the file system
+- `/reloadrequirements [map]` — reload the requirements table (optionally for one map)
+- `/op member` — grant user permissions to a member
+- `/deop member` — revoke user permissions from a member
 
 ## Setup
 
-1. Install Node.js 20+.
-2. Copy `.env.example` to `.env` and fill values.
-3. Install dependencies:
+1. Install Python 3.10+ and pip.
+2. Install dependencies:
 
 ```bash
-npm install
+pip install -r requirements.txt
 ```
 
+3. Edit `config.py` and fill in all paths and IDs.
 4. Start the bot:
 
 ```bash
-npm start
+python MapSearch.py
 ```
 
-## Configuration
+## Configuration (`config.py`)
 
-Environment variables are documented in `.env.example`.
+| Variable | Description |
+|---|---|
+| `TOKEN` | Discord bot token |
+| `channels` | List of allowed Discord channel IDs |
+| `users` | List of Discord user IDs with elevated permissions |
+| `admins` | List of Discord admin user IDs |
+| `database_path` | Path to the SQLite database file |
+| `map_path` | Path to the `maps/` directory on the server |
+| `pball_path` | Root path of the game installation |
+| `upload_path` | Destination for uploaded BSP/ZIP files |
+| `mapshot_path` / `public_mapshot_path` | Local and public URL paths for mapshots |
+| `texture_path`, `env_path` | Paths to textures and sky images |
 
-Important values:
-- `DISCORD_TOKEN`
-- `DISCORD_CLIENT_ID`
-- `DISCORD_GUILD_ID` (optional; recommended for faster command updates)
-- `DATABASE_PATH`
-- `CHANNEL_IDS`, `USER_IDS`, `ADMIN_IDS` (optional ACLs)
-- `MAP_PATH`, `PBALL_PATH`, `TEXTURE_PATH`, `ENV_PATH`, `MAPSHOT_PATH` (needed for file-sync features)
+## Upload format
 
-## Notes
+The `/upload_map` command accepts:
+- **`.bsp`** — placed directly under `{upload_path}/maps/[subfolder]/`
+- **`.zip`** — extracted to `upload_path`; must contain a `maps/` directory at the archive root with at least one `.bsp` file inside. The zip must not contain absolute paths or `..` components.
 
-- Command registration happens automatically at startup.
-- If `DISCORD_GUILD_ID` is set, commands are registered to that guild; otherwise globally.
-- Python files are kept in the repository as legacy reference material during migration.
