@@ -234,30 +234,65 @@ def get_bsp_file(map_path: str):
     )
 
 
-def _bsp_to_obj_stream(mesh: dict):
-    """Generate OBJ lines from a Quake 2 BSP file using Q2BSP.
+def _bsp_to_obj_stream(parsed: dict):
+    """Generate streamed OBJ text from parsed BSP geometry."""
+    vertices = parsed["vertices"]
+    edges = parsed["edges"]
+    face_edges = parsed["face_edges"]
+    faces = parsed["faces"]
+    tex_infos = parsed["tex_infos"]
 
-    Yields chunks of OBJ text so that the response can be streamed without
-    building the entire geometry string in memory at once.
-    """
     yield "# Quake 2 BSP -> OBJ\no map\n"
+    for x, y, z in vertices:
+        yield f"v {x:.6f} {z:.6f} {-y:.6f}\n"
 
-    for i in range(0, len(mesh["positions"]), 3):
-        yield f"v {mesh['positions'][i]:.6f} {mesh['positions'][i + 1]:.6f} {mesh['positions'][i + 2]:.6f}\n"
-    for i in range(0, len(mesh["uvs"]), 2):
-        yield f"vt {mesh['uvs'][i]:.6f} {mesh['uvs'][i + 1]:.6f}\n"
-
-    face_base = 1
+    vt_idx = 1
     last_material = None
-    for group in mesh["groups"]:
-        material = mesh["materials"][group["material_index"]]["name"]
-        if material != last_material:
-            yield f"usemtl {material}\n"
-            last_material = material
-        n_triangles = group["count"] // 3
-        for _ in range(n_triangles):
-            yield f"f {face_base}/{face_base} {face_base + 1}/{face_base + 1} {face_base + 2}/{face_base + 2}\n"
-            face_base += 3
+    for first_edge, num_edges, texinfo_idx in faces:
+        if num_edges < 3 or texinfo_idx < 0 or texinfo_idx >= len(tex_infos):
+            continue
+        tex_info = tex_infos[texinfo_idx]
+        texture_name = tex_info["name"]
+        if _is_culled_surface(texture_name, tex_info["flags"]):
+            continue
+        if first_edge < 0 or first_edge + num_edges > len(face_edges):
+            continue
+
+        face_indices = []
+        valid = True
+        for fe in face_edges[first_edge:first_edge + num_edges]:
+            edge_idx = fe if fe >= 0 else -fe
+            if edge_idx < 0 or edge_idx >= len(edges):
+                valid = False
+                break
+            vi = edges[edge_idx][0] if fe >= 0 else edges[edge_idx][1]
+            if vi < 0 or vi >= len(vertices):
+                valid = False
+                break
+            face_indices.append(vi)
+        if not valid or len(face_indices) < 3:
+            continue
+
+        if texture_name != last_material:
+            yield f"usemtl {texture_name}\n"
+            last_material = texture_name
+
+        s = tex_info["s"]
+        tv = tex_info["t"]
+        v0 = face_indices[0]
+        for t in range(1, len(face_indices) - 1):
+            tri = (v0, face_indices[t], face_indices[t + 1])
+            tri_vt = []
+            for vi in tri:
+                x, y, z = vertices[vi]
+                u = (x * s[0] + y * s[1] + z * s[2] + s[3]) / _QUAKE_TEXTURE_SCALE
+                uv_v = -((x * tv[0] + y * tv[1] + z * tv[2] + tv[3]) / _QUAKE_TEXTURE_SCALE)
+                yield f"vt {u:.6f} {uv_v:.6f}\n"
+                tri_vt.append(vt_idx)
+                vt_idx += 1
+            yield (
+                f"f {tri[0] + 1}/{tri_vt[0]} {tri[1] + 1}/{tri_vt[1]} {tri[2] + 1}/{tri_vt[2]}\n"
+            )
 
 
 _SURF_SKY = 0x0004
@@ -274,7 +309,7 @@ def _bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
         return (0, 0)
     lump_off = int.from_bytes(data[off:off + 4], "little", signed=False)
     lump_len = int.from_bytes(data[off + 4:off + 8], "little", signed=False)
-    if lump_off < 0 or lump_len < 0 or lump_off + lump_len > len(data):
+    if lump_off + lump_len > len(data):
         return (0, 0)
     return (lump_off, lump_len)
 
@@ -308,7 +343,7 @@ def _resolve_texture_url(texture_name: str) -> str | None:
     return None
 
 
-def _build_viewer_mesh_data(bsp_path: str):
+def _parse_bsp_geometry(bsp_path: str):
     with open(bsp_path, "rb") as f:
         data = f.read()
     if data[:4] != b"IBSP":
@@ -333,15 +368,37 @@ def _build_viewer_mesh_data(bsp_path: str):
     for i in range(tex_len // 76):
         base = tex_off + i * 76
         vals = struct.unpack_from("<8fii32si", data, base)
-        name = vals[10].decode("ascii", "ignore").rstrip("\x00")
         tex_infos.append(
             {
                 "s": vals[0:4],
                 "t": vals[4:8],
                 "flags": vals[8],
-                "name": name,
+                "name": vals[10].decode("ascii", "ignore").rstrip("\x00") or "__default__",
             }
         )
+
+    faces = []
+    for i in range(face_len // 20):
+        base = face_off + i * 20
+        _, _, first_edge, num_edges, texinfo_idx, _, _ = struct.unpack_from("<Hhihh4si", data, base)
+        faces.append((first_edge, num_edges, texinfo_idx))
+
+    return {
+        "vertices": vertices,
+        "edges": edges,
+        "face_edges": face_edges,
+        "faces": faces,
+        "tex_infos": tex_infos,
+    }
+
+
+def _build_viewer_mesh_data(bsp_path: str):
+    parsed = _parse_bsp_geometry(bsp_path)
+    vertices = parsed["vertices"]
+    edges = parsed["edges"]
+    face_edges = parsed["face_edges"]
+    tex_infos = parsed["tex_infos"]
+    faces = parsed["faces"]
 
     positions: list[float] = []
     uvs: list[float] = []
@@ -360,9 +417,7 @@ def _build_viewer_mesh_data(bsp_path: str):
         materials.append({"name": texture_name, "texture_url": _resolve_texture_url(texture_name)})
         return idx
 
-    for i in range(face_len // 20):
-        base = face_off + i * 20
-        _, _, first_edge, num_edges, texinfo_idx, _, _ = struct.unpack_from("<Hhihh4si", data, base)
+    for first_edge, num_edges, texinfo_idx in faces:
         if num_edges < 3 or texinfo_idx < 0 or texinfo_idx >= len(tex_infos):
             continue
         tex_info = tex_infos[texinfo_idx]
@@ -429,14 +484,10 @@ def get_map_obj(map_path: str, session: Session = Depends(get_session)):
     if not os.path.isfile(bsp_file):
         raise HTTPException(status_code=404, detail="BSP file not found")
 
-    try:
-        mesh = _build_viewer_mesh_data(bsp_file)
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail="Could not parse BSP file") from exc
-
+    parsed = _parse_bsp_geometry(bsp_file)
     map_name = trusted_path.split("/")[-1]
     return StreamingResponse(
-        _bsp_to_obj_stream(mesh),
+        _bsp_to_obj_stream(parsed),
         media_type="model/obj",
         headers={"Content-Disposition": f'inline; filename="{map_name}.obj"'},
     )
