@@ -298,7 +298,7 @@ _TEXTURE_UV_SCALE_OVERRIDES: dict[str, float] = {
 # Per-texture hr4 UV scale overrides.  Used instead of the default hr4 scale of 4 when the
 # hr4 image is already at the canonical BSP UV size (i.e. not a 4× upscale of the original).
 _TEXTURE_HR4_UV_SCALE_OVERRIDES: dict[str, float] = {
-    "chainlink1": 1,  # hr4 image (128×128) is the canonical size; no extra scaling needed
+    "chainlink1": 0.25,  # hr4 image (128×128) is the canonical size; no extra scaling needed
 }
 
 
