@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MapSearch</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <nav>
+    <span class="brand">🗺 MapSearch</span>
+    <a href="index.html">Search</a>
+  </nav>
+
+  <div class="hero">
+    <h1>MapSearch</h1>
+    <p>Search maps by name, message or tag</p>
+    <form class="search-form" id="searchForm">
+      <input
+        type="search"
+        id="searchInput"
+        placeholder="e.g. castle, beta, outdoor…"
+        autocomplete="off"
+        autofocus
+      />
+      <button type="submit">Search</button>
+    </form>
+  </div>
+
+  <div class="container">
+    <div id="results"></div>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    const BASE = window.BASE_URL || "";
+    const form = document.getElementById("searchForm");
+    const input = document.getElementById("searchInput");
+    const results = document.getElementById("results");
+
+    // Pre-fill from URL ?q=…
+    const params = new URLSearchParams(location.search);
+    if (params.get("q")) {
+      input.value = params.get("q");
+      doSearch(params.get("q"));
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const q = input.value.trim();
+      if (!q) return;
+      history.replaceState({}, "", `?q=${encodeURIComponent(q)}`);
+      doSearch(q);
+    });
+
+    async function doSearch(q) {
+      results.innerHTML = '<div class="spinner"></div>';
+      try {
+        const maps = await fetchJSON(`${BASE}/api/maps/search?keyword=${encodeURIComponent(q)}`);
+        renderResults(maps, q);
+      } catch (err) {
+        results.innerHTML = `<p class="empty">Error: ${err.message}</p>`;
+      }
+    }
+
+    function renderResults(maps, q) {
+      if (!maps.length) {
+        results.innerHTML = `<p class="empty">No maps found for "<strong>${escHtml(q)}</strong>".</p>`;
+        return;
+      }
+      const grid = document.createElement("div");
+      grid.className = "results-grid";
+      maps.forEach((m) => {
+        const card = makeCard(m);
+        card.addEventListener("click", () => {
+          location.href = `map.html?path=${encodeURIComponent(m.map_path)}`;
+        });
+        grid.appendChild(card);
+      });
+      results.innerHTML = `<p style="color:var(--muted);font-size:.9rem">${maps.length} result(s) for "<strong>${escHtml(q)}</strong>"</p>`;
+      results.appendChild(grid);
+    }
+  </script>
+</body>
+</html>

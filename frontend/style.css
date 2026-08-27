@@ -1,0 +1,227 @@
+/* =====================================================================
+   MapSearch – Global Styles
+   ===================================================================== */
+
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --border: #2e3248;
+  --accent: #4f8ef7;
+  --accent-hover: #3a73d8;
+  --text: #e2e8f0;
+  --muted: #8892a4;
+  --danger: #e05555;
+  --success: #3ecf8e;
+  --radius: 10px;
+  --font: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── Nav ─────────────────────────────────────────────────────────── */
+nav {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 2rem;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  height: 56px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+nav .brand {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: .03em;
+}
+nav a { color: var(--muted); font-size: 0.9rem; }
+nav a:hover { color: var(--text); text-decoration: none; }
+
+/* ── Layout ──────────────────────────────────────────────────────── */
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+/* ── Hero / Search ───────────────────────────────────────────────── */
+.hero {
+  text-align: center;
+  padding: 4rem 1rem 2rem;
+}
+.hero h1 {
+  font-size: 2.4rem;
+  font-weight: 800;
+  margin-bottom: .5rem;
+}
+.hero p { color: var(--muted); margin-bottom: 2rem; }
+
+.search-form {
+  display: flex;
+  gap: .5rem;
+  max-width: 560px;
+  margin: 0 auto;
+}
+.search-form input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: .65rem 1rem;
+  font-size: 1rem;
+  outline: none;
+}
+.search-form input:focus { border-color: var(--accent); }
+.search-form button,
+.btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: .65rem 1.25rem;
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s;
+}
+.search-form button:hover,
+.btn:hover { background: var(--accent-hover); }
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Cards / Results ─────────────────────────────────────────────── */
+#results { margin-top: 2rem; }
+.results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.map-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color .15s, transform .15s;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+}
+.map-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.map-card img {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  background: var(--bg);
+}
+.map-card .card-body { padding: .85rem 1rem; flex: 1; }
+.map-card .card-title { font-weight: 700; font-size: 1rem; margin-bottom: .25rem; }
+.map-card .card-msg { color: var(--muted); font-size: .82rem; line-height: 1.4; }
+.map-card .card-tags { margin-top: .5rem; display: flex; flex-wrap: wrap; gap: .3rem; }
+.tag {
+  font-size: .72rem;
+  background: var(--border);
+  color: var(--muted);
+  padding: .1rem .5rem;
+  border-radius: 99px;
+}
+
+/* ── Map info page ───────────────────────────────────────────────── */
+.map-header {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+.map-header img {
+  width: 280px;
+  max-width: 100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  object-fit: cover;
+}
+.map-meta { flex: 1; min-width: 200px; }
+.map-meta h1 { font-size: 1.8rem; margin-bottom: .4rem; }
+.map-meta .message {
+  color: var(--muted);
+  margin-bottom: 1rem;
+  font-size: .95rem;
+}
+.map-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: 1rem; }
+
+.section { margin-bottom: 2rem; }
+.section h2 { font-size: 1.1rem; margin-bottom: .75rem; border-bottom: 1px solid var(--border); padding-bottom: .4rem; }
+
+.files-list { list-style: none; }
+.files-list li {
+  padding: .45rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: .88rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+.files-list li .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--success);
+}
+.files-list li .dot.missing { background: var(--danger); }
+
+/* ── Viewer page ─────────────────────────────────────────────────── */
+#viewer-wrap {
+  position: fixed;
+  inset: 56px 0 0 0;
+  background: #080a0f;
+  display: flex;
+  flex-direction: column;
+}
+#viewer-canvas { flex: 1; display: block; width: 100%; }
+#viewer-controls {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: .6rem 1.2rem;
+  font-size: .82rem;
+  color: var(--muted);
+  display: flex;
+  gap: 1.5rem;
+}
+
+/* ── Misc ─────────────────────────────────────────────────────────── */
+.spinner {
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  width: 32px; height: 32px;
+  animation: spin .7s linear infinite;
+  margin: 2rem auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.empty { color: var(--muted); text-align: center; padding: 3rem 0; }
+
+.back-link { display: inline-flex; align-items: center; gap: .3rem; margin-bottom: 1.5rem; color: var(--muted); font-size: .9rem; }
+.back-link:hover { color: var(--text); text-decoration: none; }

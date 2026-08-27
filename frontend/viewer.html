@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Viewer – MapSearch</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    body { overflow: hidden; }
+    #viewer-wrap canvas { display: block; }
+    #loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: #080a0f;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      z-index: 200;
+    }
+    #loading-overlay p { color: var(--muted); }
+    #loading-overlay.hidden { display: none; }
+    #error-msg {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: .5rem;
+      color: var(--danger);
+      z-index: 200;
+      background: #080a0f;
+    }
+    #error-msg.visible { display: flex; }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="brand">🗺 MapSearch</span>
+    <a href="index.html">Search</a>
+    <span id="viewer-map-name" style="color:var(--muted);font-size:.9rem;margin-left:auto"></span>
+    <a id="back-to-map" href="#" style="font-size:.85rem">← Map info</a>
+  </nav>
+
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <p id="loading-msg">Loading BSP…</p>
+  </div>
+
+  <div id="error-msg">
+    <p id="error-text">Failed to load map.</p>
+    <a href="index.html" class="btn">Back to search</a>
+  </div>
+
+  <div id="viewer-wrap">
+    <canvas id="viewer-canvas"></canvas>
+    <div id="viewer-controls">
+      <span>🖱 Left-drag: rotate</span>
+      <span>🖱 Right-drag / scroll: zoom</span>
+      <span>🖱 Middle-drag: pan</span>
+    </div>
+  </div>
+
+  <!-- Three.js from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.164.1/examples/js/controls/OrbitControls.js"></script>
+
+  <script src="app.js"></script>
+  <script src="viewer.js"></script>
+  <script>
+    const BASE = window.BASE_URL || "";
+    const params = new URLSearchParams(location.search);
+    const mapPath = params.get("path");
+    if (!mapPath) showError("No map specified.");
+    else {
+      document.getElementById("viewer-map-name").textContent = mapPath.split("/").pop();
+      document.getElementById("back-to-map").href = `map.html?path=${encodeURIComponent(mapPath)}`;
+      initViewer(BASE, mapPath);
+    }
+
+    function showError(msg) {
+      document.getElementById("loading-overlay").classList.add("hidden");
+      const el = document.getElementById("error-msg");
+      document.getElementById("error-text").textContent = msg;
+      el.classList.add("visible");
+    }
+  </script>
+</body>
+</html>
