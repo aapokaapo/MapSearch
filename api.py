@@ -112,6 +112,35 @@ def get_bsp_file(map_path: str):
     )
 
 
+@app.get("/api/maps/{map_path:path}/image")
+def get_map_image(map_path: str):
+    """Return the best available image for a map.
+
+    Prefers a mapshot; falls back to a topshot, generating one on-demand from
+    the BSP file if it does not exist yet.  Returns 404 if no image can be
+    produced.
+    """
+    from fastapi.responses import RedirectResponse
+    from config import mapshot_path, topshot_path, map_path as maps_dir
+
+    mapshot = os.path.join(mapshot_path, map_path + ".jpg")
+    if os.path.isfile(mapshot):
+        return RedirectResponse(url=f"/mapshots/{map_path}.jpg", status_code=302)
+
+    topshot = os.path.join(topshot_path, map_path + ".jpg")
+    if not os.path.isfile(topshot):
+        # Try to generate the topshot on-demand from the BSP.
+        bsp = os.path.join(maps_dir, map_path + ".bsp")
+        if os.path.isfile(bsp):
+            from db_updates import generate_topshot
+            generate_topshot(map_path)
+
+    if os.path.isfile(topshot):
+        return RedirectResponse(url=f"/topshots/{map_path}.jpg", status_code=302)
+
+    raise HTTPException(status_code=404, detail="No image available for this map")
+
+
 @app.get("/api/maps/{map_path:path}", response_model=Map)
 def get_map(map_path: str, session: Session = Depends(get_session)):
     """Return info for a specific map by its path or name."""

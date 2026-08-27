@@ -42,8 +42,7 @@
     }
 
     function render(map, files) {
-      const topshot = `${BASE}/topshots/${map.map_path}.jpg`;
-      const mapshot = `${BASE}/mapshots/${map.map_path}.jpg`;
+      const imageUrl = `${BASE}/api/maps/${encodeURIComponent(map.map_path)}/image`;
       const tags = (map.tags || []).map((t) => `<span class="tag">${escHtml(t.tag_name)}</span>`).join("");
       const filesList = files.length
         ? files
@@ -62,7 +61,7 @@
         <a class="back-link" href="index.html">← Back to search</a>
 
         <div class="map-header">
-          <img src="${topshot}" onerror="this.src='${mapshot}'" alt="${escHtml(map.map_name)}" />
+          <img src="${imageUrl}" alt="${escHtml(map.map_name)}" />
           <div class="map-meta">
             <h1>${escHtml(map.map_name)}</h1>
             <p class="message">${escHtml(map.message || "No description available.")}</p>
