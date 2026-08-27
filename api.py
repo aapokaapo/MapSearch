@@ -342,26 +342,26 @@ def _resolve_face_indices(
     return face_indices
 
 
-def _resolve_texture_url(texture_name: str) -> str | None:
+def _resolve_texture_url(texture_name: str) -> tuple[str | None, int]:
     from config import pball_path
     pball_root = os.path.realpath(pball_path.rstrip("/"))
     tex_rel = texture_name.strip("/").replace("\\", "/")
     if not tex_rel:
-        return None
+        return None, 1
     tex_dir, tex_base = os.path.split(tex_rel)
     candidates = []
     for ext in _BROWSER_TEXTURE_EXTS:
         if tex_dir:
-            candidates.append((os.path.join("textures", tex_dir, "hr4", f"{tex_base}.{ext}"), f"/pball/textures/{tex_dir}/hr4/{tex_base}.{ext}"))
-        candidates.append((os.path.join("textures", f"{tex_rel}.{ext}"), f"/pball/textures/{tex_rel}.{ext}"))
+            candidates.append((os.path.join("textures", tex_dir, "hr4", f"{tex_base}.{ext}"), f"/pball/textures/{tex_dir}/hr4/{tex_base}.{ext}", 4))
+        candidates.append((os.path.join("textures", f"{tex_rel}.{ext}"), f"/pball/textures/{tex_rel}.{ext}", 1))
 
-    for rel_disk, rel_url in candidates:
+    for rel_disk, rel_url, uv_scale in candidates:
         disk_path = os.path.realpath(os.path.join(pball_root, rel_disk))
         if not disk_path.startswith(pball_root + os.sep):
             continue
         if os.path.isfile(disk_path):
-            return rel_url
-    return None
+            return rel_url, uv_scale
+    return None, 1
 
 
 def _parse_bsp_geometry(bsp_path: str):
@@ -436,7 +436,8 @@ def _build_viewer_mesh_data(bsp_path: str):
             return idx
         idx = len(materials)
         material_key_to_index[key] = idx
-        materials.append({"name": texture_name, "texture_url": _resolve_texture_url(texture_name), "opacity": opacity})
+        texture_url, uv_scale = _resolve_texture_url(texture_name)
+        materials.append({"name": texture_name, "texture_url": texture_url, "uv_scale": uv_scale, "opacity": opacity})
         return idx
 
     for first_edge, num_edges, texinfo_idx in faces:
