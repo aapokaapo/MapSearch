@@ -241,30 +241,26 @@ def _bsp_to_obj_stream(bsp_path: str):
     """
     from Q2BSP import Q2BSP
 
-    try:
-        bsp = Q2BSP(bsp_path)
-    except Exception:
-        return
+    bsp = Q2BSP(bsp_path)
 
     yield "# Quake 2 BSP -> OBJ\no map\n"
 
-    # Emit all vertices.  Q2BSP stores them as point3f (x, y, z) in Quake
-    # coords; swap Y/Z and negate the old Y to match standard orientation.
+    # Q2BSP vertices are plain [x, y, z] lists.
+    # Swap Y/Z and negate old Y to convert Quake coords to standard orientation.
     for v in bsp.vertices:
-        yield f"v {v.x:.6f} {v.z:.6f} {-v.y:.6f}\n"
+        yield f"v {v[0]:.6f} {v[2]:.6f} {-v[1]:.6f}\n"
 
-    # Build a lookup from point3f identity to 1-based OBJ vertex index so
-    # that face definitions can reference the already-emitted vertices.
+    # Build a lookup from object identity to 1-based OBJ vertex index.
+    # bsp.vertices is a stable list so the list objects won't be GC'd here.
     vert_index = {id(v): i + 1 for i, v in enumerate(bsp.vertices)}
 
     # Emit fan-triangulated faces.  Each face.vertices entry is a list of
-    # (start_point3f, end_point3f) edge pairs; the polygon vertices are the
-    # start vertex of each edge in order.
+    # (start_vertex, end_vertex) edge pairs taken directly from bsp.vertices;
+    # the polygon vertices are the start vertex of each edge in order.
     for face in bsp.faces:
         if len(face.vertices) < 3:
             continue
-        poly = [pair[0] for pair in face.vertices]
-        indices = [vert_index.get(id(p)) for p in poly]
+        indices = [vert_index.get(id(pair[0])) for pair in face.vertices]
         if any(i is None for i in indices):
             continue
         v0 = indices[0]
@@ -284,6 +280,13 @@ def get_map_obj(map_path: str, session: Session = Depends(get_session)):
     bsp_file = os.path.join(maps_dir, trusted_path + ".bsp")
     if not os.path.isfile(bsp_file):
         raise HTTPException(status_code=404, detail="BSP file not found")
+
+    from Q2BSP import Q2BSP
+
+    try:
+        Q2BSP(bsp_file)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Could not parse BSP file") from exc
 
     map_name = trusted_path.split("/")[-1]
     return StreamingResponse(
