@@ -4,8 +4,7 @@ import sys
 import zipfile
 
 import discord
-from discord.ext import commands
-from config import TOKEN, users, admins, channels, upload_path, database_path, map_path
+from config import TOKEN, admins, upload_path, database_path, map_path
 from collections import deque
 from db_io import create_connection, select, find_map_name
 from db_queries import print_map_search, print_map_info
@@ -25,21 +24,11 @@ bot = discord.Bot()
 already_seen: deque = deque(maxlen=50)
 
 
-def in_allowed_channel():
-    async def predicate(ctx: discord.ApplicationContext):
-        if ctx.channel_id not in channels:
-            await ctx.respond("Commands are not allowed in this channel.", ephemeral=True)
-            return False
-        return True
-    return commands.check(predicate)
-
-
 # ---------------------------------------------------------------------------
 # Public commands
 # ---------------------------------------------------------------------------
 
 @bot.slash_command(description="Search for maps by keyword (name, message or tag)")
-@in_allowed_channel()
 async def mapsearch(ctx: discord.ApplicationContext, keyword: str):
     conn = create_connection(database_path)
     await ctx.defer()
@@ -48,7 +37,6 @@ async def mapsearch(ctx: discord.ApplicationContext, keyword: str):
 
 
 @bot.slash_command(description="Show map info for a specific map, subdirectory, or random")
-@in_allowed_channel()
 async def mapinfo(ctx: discord.ApplicationContext, keyword: str = None):
     conn = create_connection(database_path)
     await ctx.defer()
@@ -57,7 +45,6 @@ async def mapinfo(ctx: discord.ApplicationContext, keyword: str = None):
 
 
 @bot.slash_command(description="Show database file statistics")
-@in_allowed_channel()
 async def files(ctx: discord.ApplicationContext):
     conn = create_connection(database_path)
     await ctx.defer()
@@ -85,7 +72,6 @@ async def files(ctx: discord.ApplicationContext):
 
 
 @bot.slash_command(description="Update which required files are provided by the server")
-@in_allowed_channel()
 async def updatefiles(ctx: discord.ApplicationContext):
     conn = create_connection(database_path)
     await ctx.defer()
@@ -95,7 +81,6 @@ async def updatefiles(ctx: discord.ApplicationContext):
 
 
 @bot.slash_command(description="Show required files for a map from the database")
-@in_allowed_channel()
 async def requiredfiles(ctx: discord.ApplicationContext, map_name: str):
     conn = create_connection(database_path)
     await ctx.defer()
@@ -108,7 +93,6 @@ async def requiredfiles(ctx: discord.ApplicationContext, map_name: str):
 
 
 @bot.slash_command(description="Show live-computed requirements for a map")
-@in_allowed_channel()
 async def requirements(ctx: discord.ApplicationContext, map_name: str):
     conn = create_connection(database_path)
     await ctx.defer()
@@ -122,7 +106,6 @@ async def requirements(ctx: discord.ApplicationContext, map_name: str):
 
 
 @bot.slash_command(description="Show populated servers")
-@in_allowed_channel()
 async def broadcast_servers(ctx: discord.ApplicationContext):
     conn = create_connection(database_path)
     await ctx.defer()
@@ -131,7 +114,6 @@ async def broadcast_servers(ctx: discord.ApplicationContext):
 
 
 @bot.slash_command(description="Broadcast a server by direct IP and port")
-@in_allowed_channel()
 async def scores(ctx: discord.ApplicationContext, address: str):
     conn = create_connection(database_path)
     await ctx.defer()
@@ -144,7 +126,6 @@ async def scores(ctx: discord.ApplicationContext, address: str):
 
 
 @bot.slash_command(description="Start a map trivia game")
-@in_allowed_channel()
 async def trivia_game(ctx: discord.ApplicationContext):
     conn = create_connection(database_path)
     await ctx.defer()
@@ -156,18 +137,16 @@ async def trivia_game(ctx: discord.ApplicationContext):
 # Upload command
 # ---------------------------------------------------------------------------
 
-@bot.slash_command(description="Upload a BSP file or a ZIP with the expected game file structure (admin only)")
-@in_allowed_channel()
+@bot.slash_command(
+    description="Upload a BSP file or a ZIP with the expected game file structure (admin only)",
+    default_member_permissions=discord.Permissions(administrator=True),
+)
 async def upload_map(
     ctx: discord.ApplicationContext,
     file: discord.Attachment,
     subfolder: str = "",
 ):
     """Upload a .bsp or .zip file. The zip must contain a maps/ directory at its root."""
-    if ctx.author.id not in admins:
-        await ctx.respond("Not authorized.", ephemeral=True)
-        return
-
     await ctx.defer(ephemeral=False)
 
     if not upload_path:
@@ -219,27 +198,25 @@ async def upload_map(
 
 
 # ---------------------------------------------------------------------------
-# User commands (require user permission)
+# User commands (require Manage Messages permission)
 # ---------------------------------------------------------------------------
 
-@bot.slash_command(description="Add a mapshot image for a map")
-@in_allowed_channel()
+@bot.slash_command(
+    description="Add a mapshot image for a map",
+    default_member_permissions=discord.Permissions(manage_messages=True),
+)
 async def mapshot(ctx: discord.ApplicationContext, map_name: str, image: discord.Attachment):
-    if ctx.author.id not in users:
-        await ctx.respond("Unauthorized user!", ephemeral=True)
-        return
     conn = create_connection(database_path)
     await ctx.defer()
     await add_mapshot(ctx.author, map_name, [image], conn, ctx, bot)
     conn.commit()
 
 
-@bot.slash_command(description="Add tags to a map")
-@in_allowed_channel()
+@bot.slash_command(
+    description="Add tags to a map",
+    default_member_permissions=discord.Permissions(manage_messages=True),
+)
 async def addtag(ctx: discord.ApplicationContext, map_name: str, tags: str):
-    if ctx.author.id not in users:
-        await ctx.respond("Unauthorized user!", ephemeral=True)
-        return
     conn = create_connection(database_path)
     tag_list = tags.split()
     await ctx.defer()
@@ -251,12 +228,11 @@ async def addtag(ctx: discord.ApplicationContext, map_name: str, tags: str):
     conn.commit()
 
 
-@bot.slash_command(description="Remove tags from a map")
-@in_allowed_channel()
+@bot.slash_command(
+    description="Remove tags from a map",
+    default_member_permissions=discord.Permissions(manage_messages=True),
+)
 async def deltag(ctx: discord.ApplicationContext, map_name: str, tags: str):
-    if ctx.author.id not in users:
-        await ctx.respond("Unauthorized user!", ephemeral=True)
-        return
     conn = create_connection(database_path)
     tag_list = tags.split()
     await ctx.defer()
@@ -272,12 +248,11 @@ async def deltag(ctx: discord.ApplicationContext, map_name: str, tags: str):
 # Admin commands
 # ---------------------------------------------------------------------------
 
-@bot.slash_command(description="Reload map database from file system (admin only)")
-@in_allowed_channel()
+@bot.slash_command(
+    description="Reload map database from file system (admin only)",
+    default_member_permissions=discord.Permissions(administrator=True),
+)
 async def reloadmaps(ctx: discord.ApplicationContext):
-    if ctx.author.id not in admins:
-        await ctx.respond("Not authorized.", ephemeral=True)
-        return
     conn = create_connection(database_path)
     await ctx.defer()
     await ctx.respond("Reloading maps! Please hold...")
@@ -286,42 +261,15 @@ async def reloadmaps(ctx: discord.ApplicationContext):
     await ctx.channel.send("Done!")
 
 
-@bot.slash_command(description="Reload map requirements table (admin only)")
-@in_allowed_channel()
+@bot.slash_command(
+    description="Reload map requirements table (admin only)",
+    default_member_permissions=discord.Permissions(administrator=True),
+)
 async def reloadrequirements(ctx: discord.ApplicationContext, map_name: str = None):
-    if ctx.author.id not in admins:
-        await ctx.respond("Not authorized.", ephemeral=True)
-        return
     conn = create_connection(database_path)
     await ctx.defer()
     await reload_requirements(conn, ctx, mapname=map_name)
     conn.commit()
-
-
-@bot.slash_command(description="Grant user permissions to a member (admin only)")
-@in_allowed_channel()
-async def op(ctx: discord.ApplicationContext, member: discord.Member):
-    if ctx.author.id not in admins:
-        await ctx.respond("Not authorized.", ephemeral=True)
-        return
-    if member.id not in users:
-        users.append(member.id)
-        await ctx.respond(f"{member.display_name} added to users!")
-    else:
-        await ctx.respond(f"{member.display_name} already in users!")
-
-
-@bot.slash_command(description="Revoke user permissions from a member (admin only)")
-@in_allowed_channel()
-async def deop(ctx: discord.ApplicationContext, member: discord.Member):
-    if ctx.author.id not in admins:
-        await ctx.respond("Not authorized.", ephemeral=True)
-        return
-    if member.id in users:
-        users.remove(member.id)
-        await ctx.respond(f"{member.display_name} removed from users!")
-    else:
-        await ctx.respond(f"{member.display_name} not in users!")
 
 
 # ---------------------------------------------------------------------------

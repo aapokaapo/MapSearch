@@ -4,7 +4,7 @@ import sys
 
 from db_io import *
 import os
-from config import mapshot_path, users, admins, channels
+from config import mapshot_path, admins
 from config import texture_path, env_path, pball_path, map_path
 from sqlite3 import Connection
 from typing import List, Iterator
