@@ -17,7 +17,7 @@ from map_requirements import print_requirements, print_required_files
 from broadcaster import broadcast, server_status
 from trivia import trivia
 
-sys.path.append("../image")
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking"))
 from Q2BSP import Q2BSP
 
 
@@ -335,4 +335,3 @@ async def on_ready():
 
 
 bot.run(TOKEN)
-
