@@ -271,8 +271,8 @@ def _bsp_to_obj_stream(parsed: dict):
             tri_vt = []
             for vi in tri:
                 x, y, z = vertices[vi]
-                u = (x * s[0] + y * s[1] + z * s[2] + s[3]) / _QUAKE_TEXTURE_SCALE
-                uv_v = -((x * tv[0] + y * tv[1] + z * tv[2] + tv[3]) / _QUAKE_TEXTURE_SCALE)
+                u = x * s[0] + y * s[1] + z * s[2] + s[3]
+                uv_v = -(x * tv[0] + y * tv[1] + z * tv[2] + tv[3])
                 yield f"vt {u:.6f} {uv_v:.6f}\n"
                 tri_vt.append(vt_idx)
                 vt_idx += 1
@@ -287,7 +287,6 @@ _SURF_TRANS66 = 0x0020
 _SURF_NODRAW = 0x0080
 _CULLED_TEXTURE_NAMES = {"sky", "hint", "clip", "skip"}
 _BROWSER_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp")
-_QUAKE_TEXTURE_SCALE = 256.0
 
 
 def _bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
@@ -453,8 +452,8 @@ def _build_viewer_mesh_data(bsp_path: str):
             for vi in (v0, face_indices[t], face_indices[t + 1]):
                 x, y, z = vertices[vi]
                 positions.extend((x, z, -y))
-                u = (x * s[0] + y * s[1] + z * s[2] + s[3]) / _QUAKE_TEXTURE_SCALE
-                v = -((x * tv[0] + y * tv[1] + z * tv[2] + tv[3]) / _QUAKE_TEXTURE_SCALE)
+                u = x * s[0] + y * s[1] + z * s[2] + s[3]
+                v = -((x * tv[0] + y * tv[1] + z * tv[2] + tv[3]))
                 uvs.extend((u, v))
             current_group["count"] += 3
             vertex_cursor += 3

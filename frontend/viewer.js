@@ -125,6 +125,9 @@ async function buildMaterials(materialDefs, base) {
       if (map) {
         map.wrapS = THREE.RepeatWrapping;
         map.wrapT = THREE.RepeatWrapping;
+        const w = map.image.width || 256;
+        const h = map.image.height || 256;
+        map.repeat.set(1 / w, 1 / h);
       }
     }
     return new THREE.MeshLambertMaterial({
