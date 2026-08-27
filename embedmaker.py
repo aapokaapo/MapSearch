@@ -74,17 +74,23 @@ async def make_embed(keyword, maps=None, message=None, tags=None):
         if tags:
             embed.add_field(name="Tags", value=tags, inline=False)
         if keyword != "No match":
+            from config import base_url
             embed.add_field(
                 name="Download",
-                value="[CLICK HERE TO DOWNLOAD](" + public_map_path + keyword + ".bsp)",
+                value="[CLICK HERE TO DOWNLOAD](" + base_url + "/api/maps/" + keyword + "/download)",
                 inline=False,
             )
             import os
             mapshot_file = os.path.join(mapshot_path, keyword + ".jpg")
+            topshot_file = os.path.join(topshot_path, keyword + ".jpg")
             if os.path.isfile(mapshot_file):
                 embed.set_image(url=public_mapshot_path + keyword + ".jpg")
+                if not os.path.isfile(topshot_file):
+                    from db_updates import generate_topshot
+                    generate_topshot(keyword)
+                if os.path.isfile(topshot_file):
+                    embed.set_thumbnail(url=public_topshot_path + keyword + ".jpg")
             else:
-                topshot_file = os.path.join(topshot_path, keyword + ".jpg")
                 if not os.path.isfile(topshot_file):
                     from db_updates import generate_topshot
                     generate_topshot(keyword)

@@ -187,8 +187,8 @@ def export_bsp(map_name: str, session: Session = Depends(get_session)):
 
 # Serve mapshots and topshots before the frontend catch-all.
 _PBALL_DIR = os.path.join(_BASE_DIR, "pball")
-_MAPSHOTS_DIR = os.path.join(_PBALL_DIR, "mapshots")
-_TOPSHOTS_DIR = os.path.join(_PBALL_DIR, "topshots")
+_MAPSHOTS_DIR = os.path.join(_PBALL_DIR, "pics", "mapshots")
+_TOPSHOTS_DIR = "/var/www/html/topshots"
 if os.path.isdir(_MAPSHOTS_DIR):
     app.mount("/mapshots", StaticFiles(directory=_MAPSHOTS_DIR), name="mapshots")
 if os.path.isdir(_TOPSHOTS_DIR):
