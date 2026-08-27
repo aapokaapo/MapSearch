@@ -5,8 +5,15 @@ import embedmaker
 import searcher
 from db_io import find_map_name
 from models import Map, Tag
+from sqlalchemy import case
 from sqlmodel import Session, select
 from utils import send
+
+
+def _beta_sort_key():
+    """Return a SQLAlchemy sort expression that puts beta/bN maps last."""
+    _is_beta = Map.map_path.like("%beta%") | Map.map_path.op("GLOB")("*_b[0-9]*")
+    return case((_is_beta, 1), else_=0)
 
 
 async def print_map_search(keyword: str, session: Session, ctx) -> None:
@@ -21,7 +28,7 @@ async def print_map_search(keyword: str, session: Session, ctx) -> None:
             | Map.map_name.like(kw)
             | Map.message.like(kw)
             | Map.map_id.in_(tag_map_ids)
-        )
+        ).order_by(_beta_sort_key())
     ).all()
     rows = [m.map_path for m in maps]
     for embed in await searcher.map_search(keyword, rows):
