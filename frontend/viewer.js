@@ -170,8 +170,17 @@ function parseQ2BSP(buffer) {
       const seIdx = firstEdge + e;
       if (seIdx >= numSurfEdges) continue;
       const se = surfedges[seIdx];
-      const vi = se >= 0 ? edges[se * 2] : edges[(-se) * 2 + 1];
-      if (vi === undefined || vi >= numVerts) continue;
+      let edgeIdx, vi;
+      if (se >= 0) {
+        edgeIdx = se * 2;
+        if (edgeIdx >= numEdges * 2) continue;
+        vi = edges[edgeIdx];
+      } else {
+        edgeIdx = (-se) * 2 + 1;
+        if (edgeIdx >= numEdges * 2) continue;
+        vi = edges[edgeIdx];
+      }
+      if (vi >= numVerts) continue;
       faceVerts.push(vi);
     }
     if (faceVerts.length < 3) continue;
