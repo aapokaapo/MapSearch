@@ -86,14 +86,14 @@ async def make_embed(keyword, maps=None, message=None, tags=None):
             if os.path.isfile(mapshot_file):
                 embed.set_image(url=public_mapshot_path + keyword + ".jpg")
                 if not os.path.isfile(topshot_file):
-                    from db_updates import generate_topshot
-                    generate_topshot(keyword)
+                    from db_updates import request_topshot_via_api
+                    request_topshot_via_api(keyword)
                 if os.path.isfile(topshot_file):
                     embed.set_thumbnail(url=public_topshot_path + keyword + ".jpg")
             else:
                 if not os.path.isfile(topshot_file):
-                    from db_updates import generate_topshot
-                    generate_topshot(keyword)
+                    from db_updates import request_topshot_via_api
+                    request_topshot_via_api(keyword)
                 if os.path.isfile(topshot_file):
                     embed.set_image(url=public_topshot_path + keyword + ".jpg")
         return embed
