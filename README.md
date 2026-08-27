@@ -75,7 +75,7 @@ python MapSearch.py
 7. *(Optional)* Start the web API:
 
 ```bash
-uvicorn api:app --reload
+uvicorn api:app --host 127.0.0.1 --port 8080
 ```
 
 ## Configuration (`config.py`)
@@ -93,6 +93,36 @@ uvicorn api:app --reload
 | `public_topshot_path` | Public URL prefix for topshot images |
 | `public_map_path` | Public URL prefix for map downloads |
 | `admins` | List of Discord admin user IDs |
+
+## Deployment
+
+The production site (`mapsearch.website`) is served by **Caddy**. Place the following block in your `Caddyfile`:
+
+```caddy
+mapsearch.website {
+    route /api/* {
+        reverse_proxy localhost:8080
+    }
+    root * /var/www/html
+    @notStatic not file
+    reverse_proxy @notStatic localhost:4000
+    file_server
+    php_fastcgi unix//run/php/php8.2-fpm.sock
+}
+```
+
+| Component | Port / Socket | Description |
+|---|---|---|
+| FastAPI (`api.py`) | `localhost:8080` | REST API — handles all `/api/*` requests |
+| Secondary service | `localhost:4000` | Handles dynamic non-static routes |
+| Static files | `/var/www/html` | Frontend files (`frontend/`) deployed here |
+| PHP | `/run/php/php8.2-fpm.sock` | PHP scripts served via FastCGI |
+
+Deploy the `frontend/` directory contents to `/var/www/html` and start the API with:
+
+```bash
+uvicorn api:app --host 127.0.0.1 --port 8080
+```
 
 ## Environment (`.env`)
 
