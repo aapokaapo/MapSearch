@@ -250,18 +250,30 @@ def _bsp_to_obj_stream(bsp_path: str):
     for v in bsp.vertices:
         yield f"v {v[0]:.6f} {v[2]:.6f} {-v[1]:.6f}\n"
 
-    # Build a lookup from object identity to 1-based OBJ vertex index.
-    # bsp.vertices is a stable list so the list objects won't be GC'd here.
-    vert_index = {id(v): i + 1 for i, v in enumerate(bsp.vertices)}
+    n_verts = len(bsp.vertices)
 
-    # Emit fan-triangulated faces.  Each face.vertices entry is a list of
-    # (start_vertex, end_vertex) edge pairs taken directly from bsp.vertices;
-    # the polygon vertices are the start vertex of each edge in order.
+    # Emit fan-triangulated faces.
+    # In Quake 2 BSP, each face references a range of face_edges entries.
+    # Each face_edge is a signed edge index: positive means use edge's start
+    # vertex; negative means the edge is reversed so use its end vertex.
+    # face.vertices from Q2BSP has a double-indirection bug, so we read the
+    # raw lumps directly.
     for face in bsp.faces:
-        if len(face.vertices) < 3:
+        if face.num_edges < 3:
             continue
-        indices = [vert_index.get(id(pair[0])) for pair in face.vertices]
-        if any(i is None for i in indices):
+        face_edge_slice = bsp.face_edges[face.first_edge:face.first_edge + face.num_edges]
+        indices = []
+        valid = True
+        for fe in face_edge_slice:
+            if fe >= 0:
+                vi = bsp.edge_list[fe][0]
+            else:
+                vi = bsp.edge_list[-fe][1]
+            if vi < 0 or vi >= n_verts:
+                valid = False
+                break
+            indices.append(vi + 1)  # OBJ indices are 1-based
+        if not valid or len(indices) < 3:
             continue
         v0 = indices[0]
         for t in range(1, len(indices) - 1):
