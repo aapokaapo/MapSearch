@@ -100,3 +100,22 @@ def generate_topshot(map_rel: str) -> None:
         )
     except Exception as e:
         print(f"generate_topshot: failed for {map_rel}: {e}")
+
+
+def request_topshot_via_api(map_rel: str) -> None:
+    """
+    Ask the API to generate a topshot for the given map by calling the
+    /api/export-bsp endpoint.  This delegates image generation to the API
+    process, which has the required dependencies available.
+    """
+    import urllib.request
+    import urllib.parse
+    from config import base_url
+
+    url = base_url + "/api/export-bsp?" + urllib.parse.urlencode({"map_name": map_rel})
+    try:
+        req = urllib.request.Request(url, method="POST")
+        with urllib.request.urlopen(req, timeout=30):
+            pass
+    except Exception as e:
+        print(f"request_topshot_via_api: failed for {map_rel}: {e}")
