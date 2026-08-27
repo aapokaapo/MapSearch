@@ -71,7 +71,6 @@ async function initViewer(base, mapPath) {
     if (!geo) throw new Error("Could not parse geometry.");
 
     const mesh = new THREE.Mesh(geo, materials);
-    const applySmartCulling = createSmartCullingUpdater(mesh, geo, camera);
     scene.add(mesh);
 
     // Center camera on bounding box
@@ -85,8 +84,6 @@ async function initViewer(base, mapPath) {
     camera.position.copy(center).add(new THREE.Vector3(0, maxDim * 0.4, maxDim * 1.2));
     controls.target.copy(center);
     controls.update();
-    applySmartCulling();
-    controls.addEventListener("change", applySmartCulling);
 
     overlay.classList.add("hidden");
   } catch (err) {
@@ -125,12 +122,17 @@ async function buildMaterials(materialDefs, base) {
       if (map) {
         map.wrapS = THREE.RepeatWrapping;
         map.wrapT = THREE.RepeatWrapping;
+        const w = map.image.width || 256;
+        const h = map.image.height || 256;
+        map.repeat.set(1 / w, 1 / h);
       }
     }
     return new THREE.MeshLambertMaterial({
       color,
       map,
-      side: THREE.FrontSide,
+      side: def.opacity < 1.0 ? THREE.DoubleSide : THREE.FrontSide,
+      transparent: def.opacity < 1.0,
+      opacity: def.opacity ?? 1.0,
       wireframe: false
     });
   }));
@@ -144,22 +146,6 @@ function loadTexture(loader, url) {
   return new Promise((resolve) => {
     loader.load(url, resolve, undefined, () => resolve(null));
   });
-}
-
-function createSmartCullingUpdater(mesh, geometry, camera) {
-  geometry.computeBoundingBox();
-  const box = geometry.boundingBox.clone();
-  return () => {
-    const inside = box.containsPoint(mesh.worldToLocal(camera.position.clone()));
-    const targetSide = inside ? THREE.DoubleSide : THREE.FrontSide;
-    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const material of materials) {
-      if (material.side !== targetSide) {
-        material.side = targetSide;
-        material.needsUpdate = true;
-      }
-    }
-  };
 }
 
 function hashColor(text) {

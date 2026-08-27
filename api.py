@@ -271,8 +271,8 @@ def _bsp_to_obj_stream(parsed: dict):
             tri_vt = []
             for vi in tri:
                 x, y, z = vertices[vi]
-                u = (x * s[0] + y * s[1] + z * s[2] + s[3]) / _QUAKE_TEXTURE_SCALE
-                uv_v = -((x * tv[0] + y * tv[1] + z * tv[2] + tv[3]) / _QUAKE_TEXTURE_SCALE)
+                u = (x * s[0] + y * s[1] + z * s[2] + s[3]) / _OBJ_UV_SCALE
+                uv_v = -((x * tv[0] + y * tv[1] + z * tv[2] + tv[3]) / _OBJ_UV_SCALE)
                 yield f"vt {u:.6f} {uv_v:.6f}\n"
                 tri_vt.append(vt_idx)
                 vt_idx += 1
@@ -287,7 +287,7 @@ _SURF_TRANS66 = 0x0020
 _SURF_NODRAW = 0x0080
 _CULLED_TEXTURE_NAMES = {"sky", "hint", "clip", "skip"}
 _BROWSER_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp")
-_QUAKE_TEXTURE_SCALE = 256.0
+_OBJ_UV_SCALE = 256.0  # default texel-to-UV divisor for OBJ export (no image size available)
 
 
 def _bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
@@ -302,13 +302,21 @@ def _bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
 
 
 def _is_culled_surface(texture_name: str, flags: int) -> bool:
-    if flags & (_SURF_SKY | _SURF_TRANS33 | _SURF_TRANS66 | _SURF_NODRAW):
+    if flags & (_SURF_SKY | _SURF_NODRAW):
         return True
     lower = texture_name.lower().replace("\\", "/")
     if lower.startswith("sky") or "/sky" in lower:
         return True
     components = [part for part in lower.split("/") if part]
     return any(part in _CULLED_TEXTURE_NAMES for part in components)
+
+
+def _surface_opacity(flags: int) -> float:
+    if flags & _SURF_TRANS33:
+        return 0.33
+    if flags & _SURF_TRANS66:
+        return 0.66
+    return 1.0
 
 
 def _resolve_face_indices(
@@ -417,17 +425,18 @@ def _build_viewer_mesh_data(bsp_path: str):
     uvs: list[float] = []
     groups = []
     materials = []
-    material_index_by_name = {}
+    material_key_to_index: dict[tuple[str, float], int] = {}
     current_group = None
     vertex_cursor = 0
 
-    def _material_index(texture_name: str) -> int:
-        idx = material_index_by_name.get(texture_name)
+    def _material_index(texture_name: str, opacity: float) -> int:
+        key = (texture_name, opacity)
+        idx = material_key_to_index.get(key)
         if idx is not None:
             return idx
         idx = len(materials)
-        material_index_by_name[texture_name] = idx
-        materials.append({"name": texture_name, "texture_url": _resolve_texture_url(texture_name)})
+        material_key_to_index[key] = idx
+        materials.append({"name": texture_name, "texture_url": _resolve_texture_url(texture_name), "opacity": opacity})
         return idx
 
     for first_edge, num_edges, texinfo_idx in faces:
@@ -441,7 +450,8 @@ def _build_viewer_mesh_data(bsp_path: str):
         if face_indices is None:
             continue
 
-        material_index = _material_index(texture_name)
+        opacity = _surface_opacity(tex_info["flags"])
+        material_index = _material_index(texture_name, opacity)
         if current_group is None or current_group["material_index"] != material_index:
             current_group = {"start": vertex_cursor, "count": 0, "material_index": material_index}
             groups.append(current_group)
@@ -453,8 +463,8 @@ def _build_viewer_mesh_data(bsp_path: str):
             for vi in (v0, face_indices[t], face_indices[t + 1]):
                 x, y, z = vertices[vi]
                 positions.extend((x, z, -y))
-                u = (x * s[0] + y * s[1] + z * s[2] + s[3]) / _QUAKE_TEXTURE_SCALE
-                v = -((x * tv[0] + y * tv[1] + z * tv[2] + tv[3]) / _QUAKE_TEXTURE_SCALE)
+                u = x * s[0] + y * s[1] + z * s[2] + s[3]
+                v = -(x * tv[0] + y * tv[1] + z * tv[2] + tv[3])
                 uvs.extend((u, v))
             current_group["count"] += 3
             vertex_cursor += 3
