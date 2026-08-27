@@ -1,54 +1,65 @@
-# MapSearch
+# MapSearch (Node.js)
 
-This is an improved version of the Discord Search bot for Digital Paintball 2 maps at https://github.com/aapokaapo/MapSearch currently running
-at the official Paintball 2 Discord. Its web-end is currently hosted at https://mapsearch.website 
+Modernized Discord bot for Digital Paintball 2 map discovery and metadata management.
 
-The original bot supported searching for maps, the trivia game
- (a map guessing game based on renderings using https://github.com/lennart-g/BSP-Hacking),
- adding mapshots and tags to maps and a live broadcast of matches.
- 
- This version uses SQLite for quicker accessing of map information, determines all files used by a map and uses
- the python module Watchdog to monitor the file system for added or deleted files and updates the
- database accordingly.
- 
- **Requirements**
- 
- Next to official python3 modules like discord, this project uses code from the following repos:
- - https://github.com/mRokita/DPLib (the required files are included in this repo)
- - https://github.com/lennart-g/BSP-Hacking
- - https://github.com/lennart-g/blender-md2-importer
- 
- **Discord commands**
- 
-     **Admin commands:**
-    `!reloadmaps` - Updates the map data (in comparison to the file system)
-    `!reloadrequirements` - Reloads tables for map requirements and specified if they're provided
+## What changed
 
-    **User commands:**
-    `!mapshot` `<map name>` (attached image) - Adds attached image as the maps mapshot
-    `!addtag` `<map name>` `<tags>` - Adds tags for the map, separate tags with whitespace
-    `!deltag` `<map name>` `<tags>` - Removes tags from the map, separate tags with whitespace
+- Migrated the bot runtime from Python to Node.js.
+- Replaced legacy `!chat` commands with Discord slash commands.
+- Added structured command permissions (admin/user/public) through environment-based ID lists.
+- Added safer command handling, explicit error responses, and central configuration validation.
+- Kept SQLite as the source of truth (`sqlite_mapdata.db`).
 
-    **Public commands:**
-    `!updatefiles` - Updates if required files are provided by the server
-    `!files` - lists how many maps are on the server and how many of their required files are provided or not
-    
-    *Map Browser*
-    `!mapsearch` `<keyword>` - Returns a list of maps with the keyword in either name or message
-    `!mapinfo` `<map name>` - Returns map information (path, message, tags etc.)
-    
-    *Broadcast*
-    `!broadcast` - shows a list of populated servers
-    `!scores` `<ip>:<port>` - broadcast the server specified with direct ip and port
-    
-    *Trivia*
-    `!trivia` - starts a trivia instance, if nobody answers correctly in 50 messages, closes itself
-    `pass` - passes the question
-    `hint` - gives the answer letter by letter
-    `quit` - closes all trivia instances
-    """
+## Supported slash commands
 
-**How to use**
-- Enter the game file paths of your server as well as the bot settings in config.py
-- Launch the Bot using `screen -AmdS <screen name> python3 <path/to/MapSearch.py>`
-- Launch the Watchdog using `screen -AmdS <screen name> python3 <path/to/pball_watchdog.py>`
+### Public
+- `/help`
+- `/mapsearch keyword`
+- `/mapinfo [map]`
+- `/files`
+- `/requiredfiles map`
+
+### Authorized users (`USER_IDS` or admins)
+- `/addtag map tags`
+- `/deltag map tags`
+- `/mapshot map image`
+
+### Admins (`ADMIN_IDS`)
+- `/uploadmap file` *(accepts `.bsp` or `.zip`; ZIP must contain game-root folders like `maps/`, `textures/`, etc.)*
+- `/updatefiles`
+- `/reloadmaps`
+- `/reloadrequirements` *(currently disabled until a Node-compatible BSP dependency parser is integrated)*
+
+## Setup
+
+1. Install Node.js 20+.
+2. Copy `.env.example` to `.env` and fill values.
+3. Install dependencies:
+
+```bash
+npm install
+```
+
+4. Start the bot:
+
+```bash
+npm start
+```
+
+## Configuration
+
+Environment variables are documented in `.env.example`.
+
+Important values:
+- `DISCORD_TOKEN`
+- `DISCORD_CLIENT_ID`
+- `DISCORD_GUILD_ID` (optional; recommended for faster command updates)
+- `DATABASE_PATH`
+- `CHANNEL_IDS`, `USER_IDS`, `ADMIN_IDS` (optional ACLs)
+- `MAP_PATH`, `PBALL_PATH`, `TEXTURE_PATH`, `ENV_PATH`, `MAPSHOT_PATH` (needed for file-sync features)
+
+## Notes
+
+- Command registration happens automatically at startup.
+- If `DISCORD_GUILD_ID` is set, commands are registered to that guild; otherwise globally.
+- Python files are kept in the repository as legacy reference material during migration.

@@ -1,0 +1,23 @@
+{
+  "name": "mapsearch",
+  "version": "1.0.0",
+  "description": "This is an improved version of the Discord Search bot for Digital Paintball 2 maps at https://github.com/aapokaapo/MapSearch currently running at the official Paintball 2 Discord. Its web-end is currently hosted at https://mapsearch.website",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node --check src/index.js && node --check src/commands/index.js && node --check src/db/queries.js && node --check src/utils/maps.js",
+    "start": "node src/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://localhost:26831/aapokaapo/MapSearch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "better-sqlite3": "^11.8.1",
+    "discord.js": "^14.22.1",
+    "dotenv": "^16.4.5"
+  }
+}
