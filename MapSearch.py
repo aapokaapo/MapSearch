@@ -41,6 +41,26 @@ async def mapinfo(ctx: discord.ApplicationContext, map_name: str = None):
 # Upload command (administrator only)
 # ---------------------------------------------------------------------------
 
+class _ConfirmView(discord.ui.View):
+    """A simple Yes / No confirmation view."""
+
+    def __init__(self):
+        super().__init__(timeout=60, disable_on_timeout=True)
+        self.confirmed: bool | None = None
+
+    @discord.ui.button(label="Yes", style=discord.ButtonStyle.danger)
+    async def yes(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.confirmed = True
+        self.stop()
+        await interaction.response.defer()
+
+    @discord.ui.button(label="No", style=discord.ButtonStyle.secondary)
+    async def no(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.confirmed = False
+        self.stop()
+        await interaction.response.defer()
+
+
 @bot.slash_command(
     description="Upload a BSP or ZIP file; generates topshot and populates database (admin only)",
     default_member_permissions=discord.Permissions(administrator=True),
@@ -69,12 +89,33 @@ async def upload_map(
         dest_dir = os.path.join(upload_path, "maps", safe_subfolder) if safe_subfolder else os.path.join(upload_path, "maps")
         os.makedirs(dest_dir, exist_ok=True)
         dest_path = os.path.join(dest_dir, file.filename)
+
+        overwrite_confirmed = False
+        if os.path.exists(dest_path):
+            view = _ConfirmView()
+            await ctx.respond(
+                f"⚠️ `maps/{os.path.join(safe_subfolder, file.filename) if safe_subfolder else file.filename}` already exists. Overwrite?",
+                view=view,
+            )
+            await view.wait()
+            if not view.confirmed:
+                cancel_msg = "⏱️ Confirmation timed out. Upload cancelled." if view.confirmed is None else "❌ Upload cancelled."
+                await ctx.edit(content=cancel_msg, view=None)
+                return
+            overwrite_confirmed = True
+            await ctx.edit(content="⏳ Overwriting…", view=None)
+
         await file.save(dest_path)
         map_rel = os.path.join(safe_subfolder, os.path.splitext(file.filename)[0]) if safe_subfolder else os.path.splitext(file.filename)[0]
         saved_bsps.append(map_rel)
-        await ctx.respond(f"✅ BSP saved as `maps/{map_rel}.bsp`")
+        bsp_msg = f"✅ BSP saved as `maps/{map_rel}.bsp`"
+        if overwrite_confirmed:
+            await ctx.edit(content=bsp_msg, view=None)
+        else:
+            await ctx.respond(bsp_msg)
 
     else:  # .zip
+        already_responded = False
         tmp_path = os.path.join("/tmp", file.filename)
         await file.save(tmp_path)
         try:
@@ -118,6 +159,31 @@ async def upload_map(
                     )
                     return
                 zip_prefix = first_prefix
+
+                # Check for BSP files that already exist and ask before overwriting.
+                existing_bsps = []
+                for entry in bsp_entries:
+                    entry_rel = entry[len(zip_prefix):]
+                    dest_check = os.path.normpath(os.path.join(upload_path, entry_rel))
+                    if os.path.exists(dest_check):
+                        existing_bsps.append(entry_rel)
+
+                if existing_bsps:
+                    names_str = "\n".join(f"`{n}`" for n in existing_bsps[:20])
+                    if len(existing_bsps) > 20:
+                        names_str += "\n…and more"
+                    view = _ConfirmView()
+                    await ctx.respond(
+                        f"⚠️ The following map(s) already exist. Overwrite?\n{names_str}",
+                        view=view,
+                    )
+                    already_responded = True
+                    await view.wait()
+                    if not view.confirmed:
+                        cancel_msg = "⏱️ Confirmation timed out. Upload cancelled." if view.confirmed is None else "❌ Upload cancelled."
+                        await ctx.edit(content=cancel_msg, view=None)
+                        return
+                    await ctx.edit(content="⏳ Overwriting…", view=None)
 
                 # Allowed top-level directories within the pball root.
                 ALLOWED_DIRS = {"maps", "textures", "sound", "env", "scripts", "pics"}
@@ -164,11 +230,15 @@ async def upload_map(
                     if map_rel:
                         saved_bsps.append(map_rel)
 
-            await ctx.respond(
+            success_msg = (
                 f"✅ ZIP extracted ({extracted_count} files). Found BSP files:\n"
                 + "\n".join(f"`maps/{m}.bsp`" for m in saved_bsps[:20])
                 + ("\n…and more" if len(saved_bsps) > 20 else "")
             )
+            if already_responded:
+                await ctx.edit(content=success_msg, view=None)
+            else:
+                await ctx.respond(success_msg)
         except zipfile.BadZipFile:
             await ctx.respond("Error: The uploaded file is not a valid ZIP archive.")
             return
