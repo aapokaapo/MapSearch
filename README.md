@@ -25,6 +25,7 @@ Modernized Discord bot for Digital Paintball 2 map discovery and metadata manage
 - `/mapshot map image`
 
 ### Admins (`ADMIN_IDS`)
+- `/uploadmap file` *(accepts `.bsp` or `.zip`; ZIP must contain game-root folders like `maps/`, `textures/`, etc.)*
 - `/updatefiles`
 - `/reloadmaps`
 - `/reloadrequirements` *(currently disabled until a Node-compatible BSP dependency parser is integrated)*

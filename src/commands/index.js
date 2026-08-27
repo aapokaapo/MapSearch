@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const AdmZip = require('adm-zip');
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { discord, paths, publicUrls } = require('../config');
 const db = require('../db/queries');
@@ -30,6 +31,10 @@ const commandData = [
     .setDescription('Upload a mapshot for a map')
     .addStringOption((o) => o.setName('map').setDescription('Map path or name').setRequired(true))
     .addAttachmentOption((o) => o.setName('image').setDescription('Mapshot image').setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('uploadmap')
+    .setDescription('Upload a BSP map file or a game-structured ZIP package')
+    .addAttachmentOption((o) => o.setName('file').setDescription('BSP or ZIP file').setRequired(true)),
   new SlashCommandBuilder().setName('files').setDescription('Show database file coverage stats'),
   new SlashCommandBuilder()
     .setName('requiredfiles')
@@ -225,6 +230,18 @@ async function handleReloadMaps(interaction) {
   if (!paths.map) return deny(interaction, 'MAP_PATH is not configured.');
 
   await interaction.deferReply();
+  const { inserted, removed } = syncMapsFromFs();
+  await interaction.editReply(`Map sync complete. Added ${inserted}, removed ${removed}.`);
+}
+
+async function handleReloadRequirements(interaction) {
+  if (!isAdmin(interaction.user.id)) return deny(interaction, 'Admin only command.');
+  await interaction.reply(
+    'This legacy feature depends on the Python BSP parser (Q2BSP/MD2/SKM) and is intentionally disabled in the Node.js rewrite until a Node parser is integrated.',
+  );
+}
+
+function syncMapsFromFs() {
   const fsMaps = new Set(walkBsps(paths.map));
   const dbMaps = new Set(db.allMapPaths());
 
@@ -240,14 +257,76 @@ async function handleReloadMaps(interaction) {
     inserted += 1;
   }
 
-  await interaction.editReply(`Map sync complete. Added ${inserted}, removed ${[...dbMaps].filter((m) => !fsMaps.has(m)).length}.`);
+  return { inserted, removed: [...dbMaps].filter((m) => !fsMaps.has(m)).length };
 }
 
-async function handleReloadRequirements(interaction) {
+function normalizeZipEntry(entryName) {
+  return entryName.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function isUnsafePath(relPath) {
+  return relPath.split('/').some((segment) => segment === '..');
+}
+
+async function handleUploadMap(interaction) {
   if (!isAdmin(interaction.user.id)) return deny(interaction, 'Admin only command.');
-  await interaction.reply(
-    'This legacy feature depends on the Python BSP parser (Q2BSP/MD2/SKM) and is intentionally disabled in the Node.js rewrite until a Node parser is integrated.',
-  );
+
+  const attachment = interaction.options.getAttachment('file', true);
+  const originalName = String(attachment.name || '').trim();
+  const lowerName = originalName.toLowerCase();
+  if (!lowerName.endsWith('.bsp') && !lowerName.endsWith('.zip')) {
+    return deny(interaction, 'Only `.bsp` and `.zip` uploads are supported.');
+  }
+  if (lowerName.endsWith('.bsp') && !paths.map) return deny(interaction, 'MAP_PATH is not configured.');
+  if (lowerName.endsWith('.zip') && !paths.pball) return deny(interaction, 'PBALL_PATH is not configured.');
+
+  await interaction.deferReply();
+  const response = await fetch(attachment.url);
+  if (!response.ok) throw new Error(`Upload download failed: ${response.status}`);
+  const fileBuffer = Buffer.from(await response.arrayBuffer());
+
+  if (lowerName.endsWith('.bsp')) {
+    const safeName = path.basename(originalName);
+    const targetPath = path.join(paths.map, safeName);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, fileBuffer);
+  } else {
+    const zip = new AdmZip(fileBuffer);
+    const entries = zip.getEntries();
+    const allowedRoots = new Set(['maps', 'textures', 'models', 'sound', 'pics', 'env', 'scripts', 'players']);
+    const baseDir = path.resolve(paths.pball);
+
+    let totalUncompressed = 0;
+    let hasBsp = false;
+    for (const entry of entries) {
+      if (entry.isDirectory) continue;
+      const relPath = normalizeZipEntry(entry.entryName);
+      if (!relPath || isUnsafePath(relPath)) throw new Error('ZIP contains an unsafe file path.');
+
+      const rootDir = relPath.split('/')[0].toLowerCase();
+      if (!allowedRoots.has(rootDir)) throw new Error(`ZIP contains unsupported root directory: ${rootDir}`);
+      if (rootDir === 'maps' && relPath.toLowerCase().endsWith('.bsp')) hasBsp = true;
+
+      totalUncompressed += entry.header.size;
+      if (totalUncompressed > 1024 * 1024 * 1024) throw new Error('ZIP exceeds 1GB uncompressed size limit.');
+
+      const targetPath = path.resolve(path.join(baseDir, relPath));
+      if (!targetPath.startsWith(`${baseDir}${path.sep}`)) throw new Error('ZIP extraction path escaped base directory.');
+
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, entry.getData());
+    }
+
+    if (!hasBsp) throw new Error('ZIP must include at least one `.bsp` file under `maps/`.');
+  }
+
+  let syncMessage = '';
+  if (paths.map) {
+    const { inserted, removed } = syncMapsFromFs();
+    syncMessage = ` Map sync: added ${inserted}, removed ${removed}.`;
+  }
+
+  await interaction.editReply(`Upload complete for \`${originalName}\`.${syncMessage}`);
 }
 
 async function handleHelp(interaction) {
@@ -259,6 +338,7 @@ async function handleHelp(interaction) {
     '/addtag map tags (authorized users)',
     '/deltag map tags (authorized users)',
     '/mapshot map image (authorized users)',
+    '/uploadmap file (admins; accepts .bsp or .zip)',
     '/updatefiles (admins)',
     '/reloadmaps (admins)',
     '/reloadrequirements (admins; currently disabled)',
@@ -275,6 +355,7 @@ const handlers = {
   mapshot: handleMapshot,
   files: handleFiles,
   requiredfiles: handleRequiredFiles,
+  uploadmap: handleUploadMap,
   updatefiles: handleUpdateFiles,
   reloadmaps: handleReloadMaps,
   reloadrequirements: handleReloadRequirements,

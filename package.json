@@ -15,6 +15,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "adm-zip": "^0.6.0",
     "better-sqlite3": "^11.8.1",
     "discord.js": "^14.22.1",
     "dotenv": "^16.4.5"
