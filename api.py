@@ -49,17 +49,15 @@ def search_maps(keyword: str, session: Session = Depends(get_session)):
 @app.get("/api/maps/{map_path:path}/files")
 def get_map_files(map_path: str, session: Session = Depends(get_session)):
     """Return the list of required files for a map."""
+    db_map = session.exec(select(Map).where(Map.map_path == map_path)).first()
+    if not db_map:
+        raise HTTPException(status_code=404, detail="Map not found")
     from config import map_path as maps_dir, pball_path
     bsp = os.path.join(maps_dir, map_path + ".bsp")
-    if not os.path.isfile(bsp):
-        raise HTTPException(status_code=404, detail="BSP file not found")
     # Collect all game files referenced by the map that exist on disk
-    files = []
     bsp_rel = f"maps/{map_path}.bsp"
-    if os.path.isfile(os.path.join(pball_path, bsp_rel)):
-        files.append({"path": bsp_rel, "available": True})
-    else:
-        files.append({"path": bsp_rel, "available": os.path.isfile(bsp)})
+    bsp_available = os.path.isfile(os.path.join(pball_path, bsp_rel)) or os.path.isfile(bsp)
+    files = [{"path": bsp_rel, "available": bsp_available}]
     return {"map_path": map_path, "files": files}
 
 
