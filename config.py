@@ -1,7 +1,7 @@
 import os
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_PBALL_ROOT = os.path.join(_BASE_DIR, "pball")
+_PBALL_ROOT = "/var/www/html/pball"
 _ENV_FILE = os.path.join(_BASE_DIR, ".env")
 
 
