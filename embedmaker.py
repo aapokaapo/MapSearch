@@ -77,7 +77,7 @@ async def make_embed(keyword, maps=None, message=None, tags=None):
             from config import base_url
             embed.add_field(
                 name="Map Website",
-                value="[CLICK HERE](" + base_url + "/map.html?path=" + keyword)",
+                value="[CLICK HERE](" + base_url + "/map.html?path=" + keyword + ")",
                 inline=False,
            ) 
             embed.add_field(
