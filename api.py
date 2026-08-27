@@ -301,13 +301,21 @@ def _bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
 
 
 def _is_culled_surface(texture_name: str, flags: int) -> bool:
-    if flags & (_SURF_SKY | _SURF_TRANS33 | _SURF_TRANS66 | _SURF_NODRAW):
+    if flags & (_SURF_SKY | _SURF_NODRAW):
         return True
     lower = texture_name.lower().replace("\\", "/")
     if lower.startswith("sky") or "/sky" in lower:
         return True
     components = [part for part in lower.split("/") if part]
     return any(part in _CULLED_TEXTURE_NAMES for part in components)
+
+
+def _surface_opacity(flags: int) -> float:
+    if flags & _SURF_TRANS33:
+        return 0.33
+    if flags & _SURF_TRANS66:
+        return 0.66
+    return 1.0
 
 
 def _resolve_face_indices(
@@ -416,17 +424,18 @@ def _build_viewer_mesh_data(bsp_path: str):
     uvs: list[float] = []
     groups = []
     materials = []
-    material_index_by_name = {}
+    material_key_to_index: dict[tuple[str, float], int] = {}
     current_group = None
     vertex_cursor = 0
 
-    def _material_index(texture_name: str) -> int:
-        idx = material_index_by_name.get(texture_name)
+    def _material_index(texture_name: str, opacity: float) -> int:
+        key = (texture_name, opacity)
+        idx = material_key_to_index.get(key)
         if idx is not None:
             return idx
         idx = len(materials)
-        material_index_by_name[texture_name] = idx
-        materials.append({"name": texture_name, "texture_url": _resolve_texture_url(texture_name)})
+        material_key_to_index[key] = idx
+        materials.append({"name": texture_name, "texture_url": _resolve_texture_url(texture_name), "opacity": opacity})
         return idx
 
     for first_edge, num_edges, texinfo_idx in faces:
@@ -440,7 +449,8 @@ def _build_viewer_mesh_data(bsp_path: str):
         if face_indices is None:
             continue
 
-        material_index = _material_index(texture_name)
+        opacity = _surface_opacity(tex_info["flags"])
+        material_index = _material_index(texture_name, opacity)
         if current_group is None or current_group["material_index"] != material_index:
             current_group = {"start": vertex_cursor, "count": 0, "material_index": material_index}
             groups.append(current_group)

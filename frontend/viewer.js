@@ -130,7 +130,9 @@ async function buildMaterials(materialDefs, base) {
     return new THREE.MeshLambertMaterial({
       color,
       map,
-      side: THREE.DoubleSide,
+      side: def.opacity < 1.0 ? THREE.DoubleSide : THREE.FrontSide,
+      transparent: def.opacity < 1.0,
+      opacity: def.opacity != null ? def.opacity : 1.0,
       wireframe: false
     });
   }));
