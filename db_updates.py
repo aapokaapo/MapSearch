@@ -5,7 +5,7 @@ import sys
 from sqlmodel import Session, select
 
 from config import map_path, topshot_path, pball_path
-from models import Map
+from models import Map, Tag
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking"))
 
@@ -46,7 +46,6 @@ def add_tag(map_name: str, tag: str, session: Session) -> str:
     if not map_entry:
         return f"Map `{map_name}` not found in the database."
 
-    from models import Tag
     existing = session.exec(
         select(Tag).where(Tag.map_id == map_entry.map_id, Tag.tag_name == tag)
     ).first()
@@ -66,7 +65,6 @@ def remove_tag(map_name: str, tag: str, session: Session) -> str:
     if not map_entry:
         return f"Map `{map_name}` not found in the database."
 
-    from models import Tag
     existing = session.exec(
         select(Tag).where(Tag.map_id == map_entry.map_id, Tag.tag_name == tag)
     ).first()
