@@ -12,7 +12,8 @@ from sqlmodel import Session, select
 from database import get_session
 from models import Map, Tag
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking"))
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(_BASE_DIR, "bsp_hacking"))
 
 app = FastAPI(title="MapSearch API")
 
@@ -144,7 +145,7 @@ def export_bsp(map_name: str, session: Session = Depends(get_session)):
 
 
 # Serve mapshots and topshots before the frontend catch-all.
-_PBALL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pball")
+_PBALL_DIR = os.path.join(_BASE_DIR, "pball")
 _MAPSHOTS_DIR = os.path.join(_PBALL_DIR, "mapshots")
 _TOPSHOTS_DIR = os.path.join(_PBALL_DIR, "topshots")
 if os.path.isdir(_MAPSHOTS_DIR):
@@ -153,6 +154,6 @@ if os.path.isdir(_TOPSHOTS_DIR):
     app.mount("/topshots", StaticFiles(directory=_TOPSHOTS_DIR), name="topshots")
 
 # Serve the frontend after API routes so it does not shadow `/api/*`.
-_FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+_FRONTEND_DIR = os.path.join(_BASE_DIR, "frontend")
 if os.path.isdir(_FRONTEND_DIR):
     app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
