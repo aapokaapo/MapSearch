@@ -143,6 +143,15 @@ def export_bsp(map_name: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=500, detail=f"BSP processing failed: {str(e)}")
 
 
+# Serve mapshots and topshots before the frontend catch-all.
+_PBALL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pball")
+_MAPSHOTS_DIR = os.path.join(_PBALL_DIR, "mapshots")
+_TOPSHOTS_DIR = os.path.join(_PBALL_DIR, "topshots")
+if os.path.isdir(_MAPSHOTS_DIR):
+    app.mount("/mapshots", StaticFiles(directory=_MAPSHOTS_DIR), name="mapshots")
+if os.path.isdir(_TOPSHOTS_DIR):
+    app.mount("/topshots", StaticFiles(directory=_TOPSHOTS_DIR), name="topshots")
+
 # Serve the frontend after API routes so it does not shadow `/api/*`.
 _FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
 if os.path.isdir(_FRONTEND_DIR):
