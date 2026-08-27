@@ -6,6 +6,14 @@ async function initViewer(base, mapPath) {
   const overlay = document.getElementById("loading-overlay");
   const loadMsg = document.getElementById("loading-msg");
 
+  function showError(msg) {
+    if (overlay) overlay.classList.add("hidden");
+    const el = document.getElementById("error-msg");
+    const txt = document.getElementById("error-text");
+    if (el && txt) { txt.textContent = msg; el.classList.add("visible"); }
+    else { const p = document.createElement("p"); p.style.color = "var(--danger)"; p.textContent = msg; canvas.parentElement.appendChild(p); }
+  }
+
   // ── Three.js setup ──────────────────────────────────────────────
   let renderer, scene, camera, controls;
   try {
@@ -118,36 +126,35 @@ function parseQ2BSP(buffer) {
   const fl = lump(LUMP_FACES);
 
   // Vertices: 3 floats each (12 bytes)
-  const numVerts = vl.length / 12;
-  const verts = [];
+  const numVerts = Math.floor(vl.length / 12);
+  const verts = new Float32Array(numVerts * 3);
   for (let i = 0; i < numVerts; i++) {
     const base = vl.offset + i * 12;
-    verts.push(
-      dv.getFloat32(base,     true),
-      dv.getFloat32(base + 4, true),
-      dv.getFloat32(base + 8, true)
-    );
+    verts[i * 3]     = dv.getFloat32(base,     true);
+    verts[i * 3 + 1] = dv.getFloat32(base + 4, true);
+    verts[i * 3 + 2] = dv.getFloat32(base + 8, true);
   }
 
   // Edges: 2 × uint16 each (4 bytes)
-  const numEdges = el.length / 4;
-  const edges = [];
+  const numEdges = Math.floor(el.length / 4);
+  const edges = new Uint16Array(numEdges * 2);
   for (let i = 0; i < numEdges; i++) {
     const base = el.offset + i * 4;
-    edges.push(dv.getUint16(base, true), dv.getUint16(base + 2, true));
+    edges[i * 2]     = dv.getUint16(base,     true);
+    edges[i * 2 + 1] = dv.getUint16(base + 2, true);
   }
 
   // Surfedges: 1 × int32 each (4 bytes)
-  const numSurfEdges = sl.length / 4;
-  const surfedges = [];
+  const numSurfEdges = Math.floor(sl.length / 4);
+  const surfedges = new Int32Array(numSurfEdges);
   for (let i = 0; i < numSurfEdges; i++) {
-    surfedges.push(dv.getInt32(sl.offset + i * 4, true));
+    surfedges[i] = dv.getInt32(sl.offset + i * 4, true);
   }
 
   // Faces: 20 bytes each
   // first_edge (uint32 @0), num_edges (uint16 @4)
   const FACE_SIZE = 20;
-  const numFaces = fl.length / FACE_SIZE;
+  const numFaces = Math.floor(fl.length / FACE_SIZE);
 
   const positions = [];
 
@@ -160,10 +167,23 @@ function parseQ2BSP(buffer) {
     // Fan-triangulate: v0 + vi + vi+1
     const faceVerts = [];
     for (let e = 0; e < numEdgesF; e++) {
-      const se = surfedges[firstEdge + e];
-      const vi = se >= 0 ? edges[se * 2] : edges[(-se) * 2 + 1];
+      const seIdx = firstEdge + e;
+      if (seIdx >= numSurfEdges) continue;
+      const se = surfedges[seIdx];
+      let edgeIdx, vi;
+      if (se >= 0) {
+        edgeIdx = se * 2;
+        if (edgeIdx >= numEdges * 2) continue;
+        vi = edges[edgeIdx];
+      } else {
+        edgeIdx = (-se) * 2 + 1;
+        if (edgeIdx >= numEdges * 2) continue;
+        vi = edges[edgeIdx];
+      }
+      if (vi >= numVerts) continue;
       faceVerts.push(vi);
     }
+    if (faceVerts.length < 3) continue;
     for (let t = 1; t < faceVerts.length - 1; t++) {
       const i0 = faceVerts[0];
       const i1 = faceVerts[t];
@@ -180,7 +200,7 @@ function parseQ2BSP(buffer) {
   if (!positions.length) return null;
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(positions), 3));
   geometry.computeVertexNormals();
   return geometry;
 }
