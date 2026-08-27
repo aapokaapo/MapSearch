@@ -1,11 +1,12 @@
 import io
 import os
+import struct
 import sys
 import zipfile
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case
 from sqlmodel import Session, select
@@ -55,12 +56,16 @@ def get_map_files(map_path: str, session: Session = Depends(get_session)):
     if not db_map:
         raise HTTPException(status_code=404, detail="Map not found")
     from config import map_path as maps_dir, pball_path
-    bsp = os.path.join(maps_dir, map_path + ".bsp")
-    # Collect all game files referenced by the map that exist on disk
-    bsp_rel = f"maps/{map_path}.bsp"
-    bsp_available = os.path.isfile(os.path.join(pball_path, bsp_rel)) or os.path.isfile(bsp)
-    files = [{"path": bsp_rel, "available": bsp_available}]
-    return {"map_path": map_path, "files": files}
+    trusted_path = db_map.map_path
+    bsp_file = os.path.join(maps_dir, trusted_path + ".bsp")
+    if os.path.isfile(bsp_file):
+        collected = _collect_map_files(bsp_file, trusted_path, pball_path)
+        files = [{"path": arcname, "available": True} for _, arcname in collected]
+    else:
+        # BSP not on disk – report it as missing
+        bsp_rel = f"pball/maps/{trusted_path}.bsp"
+        files = [{"path": bsp_rel, "available": False}]
+    return {"map_path": trusted_path, "files": files}
 
 
 def _collect_map_files(bsp_file: str, map_rel: str, pball: str):
@@ -226,6 +231,122 @@ def get_bsp_file(map_path: str):
         iterfile(),
         media_type="application/octet-stream",
         headers={"Content-Disposition": f'inline; filename="{map_name}.bsp"'},
+    )
+
+
+def _bsp_to_obj(bsp_path: str) -> str:
+    """Convert a Quake 2 BSP file to an OBJ-format string.
+
+    Reads the vertex, edge, surfedge and face lumps from the BSP and emits
+    a minimal OBJ that Three.js (or any other OBJ consumer) can load.
+    Returns an empty string if the file cannot be parsed.
+    """
+    try:
+        with open(bsp_path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return ""
+
+    if data[:4] != b"IBSP":
+        return ""
+
+    def lump_info(idx: int):
+        off = 8 + idx * 8
+        return (
+            int.from_bytes(data[off : off + 4], "little"),
+            int.from_bytes(data[off + 4 : off + 8], "little"),
+        )
+
+    # Lump indices
+    LUMP_VERTICES  = 2
+    LUMP_EDGES     = 11
+    LUMP_SURFEDGES = 12
+    LUMP_FACES     = 6
+
+    v_off, v_len = lump_info(LUMP_VERTICES)
+    e_off, e_len = lump_info(LUMP_EDGES)
+    s_off, s_len = lump_info(LUMP_SURFEDGES)
+    f_off, f_len = lump_info(LUMP_FACES)
+
+
+    # Vertices: 3 × float32 (12 bytes each)
+    num_verts = v_len // 12
+    verts = []
+    for i in range(num_verts):
+        base = v_off + i * 12
+        x, y, z = struct.unpack_from("<fff", data, base)
+        # Q2 coords → standard (swap Y/Z, negate old Y)
+        verts.append((x, z, -y))
+
+    # Edges: 2 × uint16 (4 bytes each)
+    num_edges = e_len // 4
+    edges = []
+    for i in range(num_edges):
+        a, b = struct.unpack_from("<HH", data, e_off + i * 4)
+        edges.append((a, b))
+
+    # Surfedges: 1 × int32 (4 bytes each)
+    num_surfedges = s_len // 4
+    surfedges = struct.unpack_from(f"<{num_surfedges}i", data, s_off)
+
+    # Faces: 20 bytes each; first_edge @ +0 (uint32), num_edges @ +4 (uint16)
+    FACE_SIZE = 20
+    num_faces = f_len // FACE_SIZE
+
+    lines = ["# Quake 2 BSP → OBJ", "o map"]
+    for x, y, z in verts:
+        lines.append(f"v {x:.6f} {y:.6f} {z:.6f}")
+
+    for fi in range(num_faces):
+        fbase = f_off + fi * FACE_SIZE
+        first_edge, num_e = struct.unpack_from("<IH", data, fbase)
+        if num_e < 3:
+            continue
+        face_verts = []
+        for e in range(num_e):
+            se_idx = first_edge + e
+            if se_idx >= num_surfedges:
+                continue
+            se = surfedges[se_idx]
+            if se >= 0:
+                vi = edges[se][0] if se < num_edges else None
+            else:
+                vi = edges[-se][1] if -se < num_edges else None
+            if vi is None or vi >= num_verts:
+                continue
+            face_verts.append(vi + 1)  # OBJ uses 1-based indices
+        if len(face_verts) < 3:
+            continue
+        # Fan-triangulate
+        v0 = face_verts[0]
+        for t in range(1, len(face_verts) - 1):
+            lines.append(f"f {v0} {face_verts[t]} {face_verts[t + 1]}")
+
+    return "\n".join(lines) + "\n"
+
+
+@app.get("/api/maps/{map_path:path}/obj")
+def get_map_obj(map_path: str, session: Session = Depends(get_session)):
+    """Return BSP geometry as a temporary OBJ file for 3D viewer use."""
+    db_map = session.exec(select(Map).where(Map.map_path == map_path)).first()
+    if not db_map:
+        raise HTTPException(status_code=404, detail="Map not found")
+
+    from config import map_path as maps_dir
+    trusted_path = db_map.map_path
+    bsp_file = os.path.join(maps_dir, trusted_path + ".bsp")
+    if not os.path.isfile(bsp_file):
+        raise HTTPException(status_code=404, detail="BSP file not found")
+
+    obj_text = _bsp_to_obj(bsp_file)
+    if not obj_text:
+        raise HTTPException(status_code=422, detail="Could not convert BSP to OBJ")
+
+    map_name = trusted_path.split("/")[-1]
+    return Response(
+        content=obj_text,
+        media_type="model/obj",
+        headers={"Content-Disposition": f'inline; filename="{map_name}.obj"'},
     )
 
 

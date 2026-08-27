@@ -1,5 +1,5 @@
 // viewer.js — Three.js BSP 3D viewer
-// Parses a Quake 2 BSP file and renders its geometry.
+// Fetches OBJ geometry from the server and renders it.
 
 async function initViewer(base, mapPath) {
   const canvas = document.getElementById("viewer-canvas");
@@ -56,18 +56,18 @@ async function initViewer(base, mapPath) {
   }
   animate();
 
-  // ── Load BSP ────────────────────────────────────────────────────
+  // ── Load OBJ from server (BSP → OBJ converted server-side) ──────
   try {
-    loadMsg.textContent = "Downloading BSP…";
-    const url = `${base}/api/maps/${encodeURIComponent(mapPath)}/bsp`;
+    loadMsg.textContent = "Converting BSP to OBJ…";
+    const url = `${base}/api/maps/${encodeURIComponent(mapPath)}/obj`;
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const buf = await resp.arrayBuffer();
+    const objText = await resp.text();
 
     loadMsg.textContent = "Parsing geometry…";
-    const geo = parseQ2BSP(buf);
+    const geo = parseOBJGeometry(objText);
 
-    if (!geo) throw new Error("Could not parse BSP geometry.");
+    if (!geo) throw new Error("Could not parse OBJ geometry.");
 
     const mesh = new THREE.Mesh(
       geo,
@@ -93,107 +93,35 @@ async function initViewer(base, mapPath) {
   }
 }
 
-// ── Quake 2 BSP parser ─────────────────────────────────────────────
-// Lump indices (Q2 BSP format)
-const LUMP_VERTICES  = 2;
-const LUMP_EDGES     = 11;
-const LUMP_SURFEDGES = 12;
-const LUMP_FACES     = 6;
-
-function parseQ2BSP(buffer) {
-  const dv = new DataView(buffer);
-  const magic = String.fromCharCode(
-    dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3)
-  );
-  if (magic !== "IBSP") {
-    console.warn("Not a Quake 2 BSP (magic=" + magic + ")");
-    return null;
-  }
-  const version = dv.getInt32(4, true);
-  if (version !== 38) {
-    console.warn("Unexpected BSP version:", version);
-  }
-
-  // Each lump entry: offset (4) + length (4), starting at byte 8
-  function lump(idx) {
-    const off = 8 + idx * 8;
-    return { offset: dv.getUint32(off, true), length: dv.getUint32(off + 4, true) };
-  }
-
-  const vl = lump(LUMP_VERTICES);
-  const el = lump(LUMP_EDGES);
-  const sl = lump(LUMP_SURFEDGES);
-  const fl = lump(LUMP_FACES);
-
-  // Vertices: 3 floats each (12 bytes)
-  const numVerts = Math.floor(vl.length / 12);
-  const verts = new Float32Array(numVerts * 3);
-  for (let i = 0; i < numVerts; i++) {
-    const base = vl.offset + i * 12;
-    verts[i * 3]     = dv.getFloat32(base,     true);
-    verts[i * 3 + 1] = dv.getFloat32(base + 4, true);
-    verts[i * 3 + 2] = dv.getFloat32(base + 8, true);
-  }
-
-  // Edges: 2 × uint16 each (4 bytes)
-  const numEdges = Math.floor(el.length / 4);
-  const edges = new Uint16Array(numEdges * 2);
-  for (let i = 0; i < numEdges; i++) {
-    const base = el.offset + i * 4;
-    edges[i * 2]     = dv.getUint16(base,     true);
-    edges[i * 2 + 1] = dv.getUint16(base + 2, true);
-  }
-
-  // Surfedges: 1 × int32 each (4 bytes)
-  const numSurfEdges = Math.floor(sl.length / 4);
-  const surfedges = new Int32Array(numSurfEdges);
-  for (let i = 0; i < numSurfEdges; i++) {
-    surfedges[i] = dv.getInt32(sl.offset + i * 4, true);
-  }
-
-  // Faces: 20 bytes each
-  // first_edge (uint32 @0), num_edges (uint16 @4)
-  const FACE_SIZE = 20;
-  const numFaces = Math.floor(fl.length / FACE_SIZE);
-
+// ── Minimal OBJ parser ─────────────────────────────────────────────
+// Supports "v" and "f" directives; faces may be triangles or simple polygons
+// (fan-triangulated).  Handles only vertex indices (no UV or normal indices).
+function parseOBJGeometry(text) {
+  const verts = [];   // flat [x, y, z, ...]
   const positions = [];
 
-  for (let f = 0; f < numFaces; f++) {
-    const fBase = fl.offset + f * FACE_SIZE;
-    const firstEdge = dv.getUint32(fBase, true);
-    const numEdgesF = dv.getUint16(fBase + 4, true);
-    if (numEdgesF < 3) continue;
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
 
-    // Fan-triangulate: v0 + vi + vi+1
-    const faceVerts = [];
-    for (let e = 0; e < numEdgesF; e++) {
-      const seIdx = firstEdge + e;
-      if (seIdx >= numSurfEdges) continue;
-      const se = surfedges[seIdx];
-      let edgeIdx, vi;
-      if (se >= 0) {
-        edgeIdx = se * 2;
-        if (edgeIdx >= numEdges * 2) continue;
-        vi = edges[edgeIdx];
-      } else {
-        edgeIdx = (-se) * 2 + 1;
-        if (edgeIdx >= numEdges * 2) continue;
-        vi = edges[edgeIdx];
+    const parts = line.split(/\s+/);
+    if (parts[0] === "v" && parts.length >= 4) {
+      verts.push(parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3]));
+    } else if (parts[0] === "f" && parts.length >= 4) {
+      // Strip any "vi/vt/vn" → just the vertex index (1-based)
+      const indices = parts.slice(1).map((p) => parseInt(p.split("/")[0], 10) - 1);
+      const numV = verts.length / 3;
+      const v0 = indices[0];
+      if (v0 < 0 || v0 >= numV) continue;
+      for (let t = 1; t < indices.length - 1; t++) {
+        const v1 = indices[t];
+        const v2 = indices[t + 1];
+        if (v1 < 0 || v1 >= numV || v2 < 0 || v2 >= numV) continue;
+        for (const vi of [v0, v1, v2]) {
+          const base = vi * 3;
+          positions.push(verts[base], verts[base + 1], verts[base + 2]);
+        }
       }
-      if (vi >= numVerts) continue;
-      faceVerts.push(vi);
-    }
-    if (faceVerts.length < 3) continue;
-    for (let t = 1; t < faceVerts.length - 1; t++) {
-      const i0 = faceVerts[0];
-      const i1 = faceVerts[t];
-      const i2 = faceVerts[t + 1];
-      // Q2 coords: x, z, -y  →  Three.js x, y, z
-      positions.push(
-        verts[i0 * 3], verts[i0 * 3 + 2], -verts[i0 * 3 + 1],
-        verts[i1 * 3], verts[i1 * 3 + 2], -verts[i1 * 3 + 1],
-        verts[i2 * 3], verts[i2 * 3 + 2], -verts[i2 * 3 + 1]
-      );
     }
   }
 
