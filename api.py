@@ -295,6 +295,11 @@ _OBJ_UV_SCALE = 256.0  # default texel-to-UV divisor for OBJ export (no image si
 _TEXTURE_UV_SCALE_OVERRIDES: dict[str, float] = {
     "chainlink1": 0.25,  # default image is 4× smaller than the BSP UV scale assumes
 }
+# Per-texture hr4 UV scale overrides.  Used instead of the default hr4 scale of 4 when the
+# hr4 image is already at the canonical BSP UV size (i.e. not a 4× upscale of the original).
+_TEXTURE_HR4_UV_SCALE_OVERRIDES: dict[str, float] = {
+    "chainlink1": 1,  # hr4 image (128×128) is the canonical size; no extra scaling needed
+}
 
 
 def _bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
@@ -359,7 +364,8 @@ def _resolve_texture_url(texture_name: str) -> tuple[str | None, int]:
     candidates = []
     for ext in _BROWSER_TEXTURE_EXTS:
         if tex_dir:
-            candidates.append((os.path.join("textures", tex_dir, "hr4", f"{tex_base}.{ext}"), f"/pball/textures/{tex_dir}/hr4/{tex_base}.{ext}", 4))
+            hr4_scale = _TEXTURE_HR4_UV_SCALE_OVERRIDES.get(tex_base.lower(), 4)
+            candidates.append((os.path.join("textures", tex_dir, "hr4", f"{tex_base}.{ext}"), f"/pball/textures/{tex_dir}/hr4/{tex_base}.{ext}", hr4_scale))
         default_scale = _TEXTURE_UV_SCALE_OVERRIDES.get(tex_base.lower(), 1)
         candidates.append((os.path.join("textures", f"{tex_rel}.{ext}"), f"/pball/textures/{tex_rel}.{ext}", default_scale))
 
