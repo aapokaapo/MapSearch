@@ -1,6 +1,5 @@
 import io
 import os
-import struct
 import sys
 import zipfile
 from typing import List, Optional
@@ -234,100 +233,48 @@ def get_bsp_file(map_path: str):
     )
 
 
-def _bsp_to_obj(bsp_path: str) -> str:
-    """Convert a Quake 2 BSP file to an OBJ-format string.
+def _bsp_to_obj_stream(bsp_path: str):
+    """Generate OBJ lines from a Quake 2 BSP file using Q2BSP.
 
-    Reads the vertex, edge, surfedge and face lumps from the BSP and emits
-    a minimal OBJ that Three.js (or any other OBJ consumer) can load.
-    Returns an empty string if the file cannot be parsed.
+    Yields chunks of OBJ text so that the response can be streamed without
+    building the entire geometry string in memory at once.
     """
+    from Q2BSP import Q2BSP
+
     try:
-        with open(bsp_path, "rb") as f:
-            data = f.read()
-    except OSError:
-        return ""
+        bsp = Q2BSP(bsp_path)
+    except Exception:
+        return
 
-    if data[:4] != b"IBSP":
-        return ""
+    yield "# Quake 2 BSP -> OBJ\no map\n"
 
-    def lump_info(idx: int):
-        off = 8 + idx * 8
-        return (
-            int.from_bytes(data[off : off + 4], "little"),
-            int.from_bytes(data[off + 4 : off + 8], "little"),
-        )
+    # Emit all vertices.  Q2BSP stores them as point3f (x, y, z) in Quake
+    # coords; swap Y/Z and negate the old Y to match standard orientation.
+    for v in bsp.vertices:
+        yield f"v {v.x:.6f} {v.z:.6f} {-v.y:.6f}\n"
 
-    # Lump indices
-    LUMP_VERTICES  = 2
-    LUMP_EDGES     = 11
-    LUMP_SURFEDGES = 12
-    LUMP_FACES     = 6
+    # Build a lookup from point3f identity to 1-based OBJ vertex index so
+    # that face definitions can reference the already-emitted vertices.
+    vert_index = {id(v): i + 1 for i, v in enumerate(bsp.vertices)}
 
-    v_off, v_len = lump_info(LUMP_VERTICES)
-    e_off, e_len = lump_info(LUMP_EDGES)
-    s_off, s_len = lump_info(LUMP_SURFEDGES)
-    f_off, f_len = lump_info(LUMP_FACES)
-
-
-    # Vertices: 3 × float32 (12 bytes each)
-    num_verts = v_len // 12
-    verts = []
-    for i in range(num_verts):
-        base = v_off + i * 12
-        x, y, z = struct.unpack_from("<fff", data, base)
-        # Q2 coords → standard (swap Y/Z, negate old Y)
-        verts.append((x, z, -y))
-
-    # Edges: 2 × uint16 (4 bytes each)
-    num_edges = e_len // 4
-    edges = []
-    for i in range(num_edges):
-        a, b = struct.unpack_from("<HH", data, e_off + i * 4)
-        edges.append((a, b))
-
-    # Surfedges: 1 × int32 (4 bytes each)
-    num_surfedges = s_len // 4
-    surfedges = struct.unpack_from(f"<{num_surfedges}i", data, s_off)
-
-    # Faces: 20 bytes each; first_edge @ +0 (uint32), num_edges @ +4 (uint16)
-    FACE_SIZE = 20
-    num_faces = f_len // FACE_SIZE
-
-    lines = ["# Quake 2 BSP → OBJ", "o map"]
-    for x, y, z in verts:
-        lines.append(f"v {x:.6f} {y:.6f} {z:.6f}")
-
-    for fi in range(num_faces):
-        fbase = f_off + fi * FACE_SIZE
-        first_edge, num_e = struct.unpack_from("<IH", data, fbase)
-        if num_e < 3:
+    # Emit fan-triangulated faces.  Each face.vertices entry is a list of
+    # (start_point3f, end_point3f) edge pairs; the polygon vertices are the
+    # start vertex of each edge in order.
+    for face in bsp.faces:
+        if len(face.vertices) < 3:
             continue
-        face_verts = []
-        for e in range(num_e):
-            se_idx = first_edge + e
-            if se_idx >= num_surfedges:
-                continue
-            se = surfedges[se_idx]
-            if se >= 0:
-                vi = edges[se][0] if se < num_edges else None
-            else:
-                vi = edges[-se][1] if -se < num_edges else None
-            if vi is None or vi >= num_verts:
-                continue
-            face_verts.append(vi + 1)  # OBJ uses 1-based indices
-        if len(face_verts) < 3:
+        poly = [pair[0] for pair in face.vertices]
+        indices = [vert_index.get(id(p)) for p in poly]
+        if any(i is None for i in indices):
             continue
-        # Fan-triangulate
-        v0 = face_verts[0]
-        for t in range(1, len(face_verts) - 1):
-            lines.append(f"f {v0} {face_verts[t]} {face_verts[t + 1]}")
-
-    return "\n".join(lines) + "\n"
+        v0 = indices[0]
+        for t in range(1, len(indices) - 1):
+            yield f"f {v0} {indices[t]} {indices[t + 1]}\n"
 
 
 @app.get("/api/maps/{map_path:path}/obj")
 def get_map_obj(map_path: str, session: Session = Depends(get_session)):
-    """Return BSP geometry as a temporary OBJ file for 3D viewer use."""
+    """Return BSP geometry as a streamed OBJ file for 3D viewer use."""
     db_map = session.exec(select(Map).where(Map.map_path == map_path)).first()
     if not db_map:
         raise HTTPException(status_code=404, detail="Map not found")
@@ -338,13 +285,9 @@ def get_map_obj(map_path: str, session: Session = Depends(get_session)):
     if not os.path.isfile(bsp_file):
         raise HTTPException(status_code=404, detail="BSP file not found")
 
-    obj_text = _bsp_to_obj(bsp_file)
-    if not obj_text:
-        raise HTTPException(status_code=422, detail="Could not convert BSP to OBJ")
-
     map_name = trusted_path.split("/")[-1]
-    return Response(
-        content=obj_text,
+    return StreamingResponse(
+        _bsp_to_obj_stream(bsp_file),
         media_type="model/obj",
         headers={"Content-Disposition": f'inline; filename="{map_name}.obj"'},
     )
