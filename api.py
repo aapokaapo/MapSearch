@@ -63,23 +63,122 @@ def get_map_files(map_path: str, session: Session = Depends(get_session)):
     return {"map_path": map_path, "files": files}
 
 
+def _collect_map_files(bsp_file: str, map_rel: str, pball: str):
+    """
+    Return a list of (disk_path, zip_arcname) pairs for the BSP and all
+    map-related loose files (textures, sounds, scripts) found under *pball*.
+    Base-game files packed inside .pak archives are not on disk as loose files
+    and are therefore naturally excluded.  Topshots are never included.
+    """
+    import re as _re
+
+    pball = pball.rstrip("/")
+    result = []
+    seen_arcnames: set = set()
+
+    def _add(disk_path: str, arcname: str) -> None:
+        if arcname not in seen_arcnames and os.path.isfile(disk_path):
+            seen_arcnames.add(arcname)
+            result.append((disk_path, arcname))
+
+    # Always include the BSP itself.
+    _add(bsp_file, f"pball/maps/{map_rel}.bsp")
+
+    # Read the whole BSP once.
+    try:
+        with open(bsp_file, "rb") as _f:
+            data = _f.read()
+    except OSError:
+        return result
+
+    if data[:4] != b"IBSP":
+        return result
+
+    def _lump(idx: int):
+        off = 8 + idx * 8
+        return (
+            int.from_bytes(data[off : off + 4], "little"),
+            int.from_bytes(data[off + 4 : off + 8], "little"),
+        )
+
+    # ── Textures (lump 5 – tex_info, 76 bytes each, name at +40, 32 bytes) ──
+    tex_off, tex_len = _lump(5)
+    textures: set = set()
+    for i in range(tex_len // 76):
+        base = tex_off + i * 76
+        raw = data[base + 40 : base + 72]
+        name = raw.decode("ascii", "ignore").rstrip("\x00")
+        if name:
+            textures.add(name)
+
+    for tex in textures:
+        for ext in ("wal", "png", "jpg", "tga", "pcx"):
+            _add(
+                os.path.join(pball, "textures", tex + "." + ext),
+                f"pball/textures/{tex}.{ext}",
+            )
+
+    # ── Entity lump (lump 0) – extract sound / sky references ───────────────
+    ent_off, ent_len = _lump(0)
+    entity_text = data[ent_off : ent_off + ent_len].decode("cp1252", "ignore").rstrip("\x00")
+
+    sounds: set = set()
+    sky: str | None = None
+    for line in entity_text.split("\n"):
+        kv = _re.findall(r'"([^"]*)"', line.strip())
+        if len(kv) == 2:
+            key, value = kv
+            if key in ("noise", "noise1", "noise2", "noise3", "noise4", "sound") and value:
+                sounds.add(value)
+            elif key == "sky" and value:
+                sky = value
+
+    # Sounds – value may already include extension.
+    for snd in sounds:
+        if "." in snd:
+            _add(os.path.join(pball, "sound", snd), f"pball/sound/{snd}")
+        else:
+            for ext in ("wav", "ogg", "mp3"):
+                _add(
+                    os.path.join(pball, "sound", snd + "." + ext),
+                    f"pball/sound/{snd}.{ext}",
+                )
+
+    # Sky box faces.
+    if sky:
+        for suffix in ("bk", "dn", "ft", "lf", "rt", "up"):
+            for ext in ("pcx", "tga", "png", "jpg"):
+                _add(
+                    os.path.join(pball, "env", sky + suffix + "." + ext),
+                    f"pball/env/{sky}{suffix}.{ext}",
+                )
+
+    # ── Scripts associated with this map name ────────────────────────────────
+    map_name = map_rel.split("/")[-1]
+    scripts_dir = os.path.join(pball, "scripts")
+    if os.path.isdir(scripts_dir):
+        for fname in sorted(os.listdir(scripts_dir)):
+            if fname.startswith(map_name + ".") or fname == map_name:
+                _add(os.path.join(scripts_dir, fname), f"pball/scripts/{fname}")
+
+    return result
+
+
 @app.get("/api/maps/{map_path:path}/download")
 def download_map_zip(map_path: str, session: Session = Depends(get_session)):
-    """Stream a ZIP archive containing the BSP and any associated files."""
+    """Stream a ZIP archive rooted at pball/ with the BSP and all associated files."""
     from config import map_path as maps_dir, pball_path
 
     bsp_file = os.path.join(maps_dir, map_path + ".bsp")
     if not os.path.isfile(bsp_file):
         raise HTTPException(status_code=404, detail="BSP file not found")
 
+    map_files = _collect_map_files(bsp_file, map_path, pball_path)
+
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(bsp_file, arcname=f"maps/{map_path}.bsp")
-        # Include topshot if available
-        from config import topshot_path
-        topshot = os.path.join(topshot_path, map_path + ".jpg")
-        if os.path.isfile(topshot):
-            zf.write(topshot, arcname=f"topshots/{map_path}.jpg")
+        for disk_path, arcname in map_files:
+            zf.write(disk_path, arcname=arcname)
 
     buf.seek(0)
     map_name = map_path.split("/")[-1]

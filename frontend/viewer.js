@@ -7,23 +7,29 @@ async function initViewer(base, mapPath) {
   const loadMsg = document.getElementById("loading-msg");
 
   // ── Three.js setup ──────────────────────────────────────────────
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(devicePixelRatio);
-  renderer.setClearColor(0x080a0f);
+  let renderer, scene, camera, controls;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(devicePixelRatio);
+    renderer.setClearColor(0x080a0f);
 
-  const scene = new THREE.Scene();
-  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  dirLight.position.set(1, 2, 1);
-  scene.add(dirLight);
+    scene = new THREE.Scene();
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(1, 2, 1);
+    scene.add(dirLight);
 
-  const camera = new THREE.PerspectiveCamera(60, 1, 1, 100000);
-  camera.position.set(0, 500, 1500);
+    camera = new THREE.PerspectiveCamera(60, 1, 1, 100000);
+    camera.position.set(0, 500, 1500);
 
-  const controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.06;
-  controls.screenSpacePanning = true;
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.screenSpacePanning = true;
+  } catch (err) {
+    showError(`3D renderer failed to initialise: ${err.message}`);
+    return;
+  }
 
   function resize() {
     const w = canvas.parentElement.clientWidth;
