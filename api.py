@@ -113,7 +113,7 @@ def get_bsp_file(map_path: str):
 
 
 @app.get("/api/maps/{map_path:path}/image")
-def get_map_image(map_path: str):
+def get_map_image(map_path: str, session: Session = Depends(get_session)):
     """Return the best available image for a map.
 
     Prefers a mapshot; falls back to a topshot, generating one on-demand from
@@ -124,22 +124,28 @@ def get_map_image(map_path: str):
     from fastapi.responses import RedirectResponse
     from config import mapshot_path, topshot_path, map_path as maps_dir
 
-    # Reject paths that could escape the image directories.
-    if ".." in map_path.split("/") or "\\" in map_path:
-        raise HTTPException(status_code=400, detail="Invalid map path")
-    safe_url_path = urllib.parse.quote(map_path, safe="/")
+    # Resolve to a trusted DB record so that path used for file I/O and
+    # redirects comes from our database, not directly from user input.
+    db_map = session.exec(
+        select(Map).where((Map.map_path == map_path) | (Map.map_name == map_path))
+    ).first()
+    if not db_map:
+        raise HTTPException(status_code=404, detail="Map not found")
 
-    mapshot = os.path.join(mapshot_path, map_path + ".jpg")
+    trusted_path = db_map.map_path
+    safe_url_path = urllib.parse.quote(trusted_path, safe="/")
+
+    mapshot = os.path.join(mapshot_path, trusted_path + ".jpg")
     if os.path.isfile(mapshot):
         return RedirectResponse(url=f"/mapshots/{safe_url_path}.jpg", status_code=302)
 
-    topshot = os.path.join(topshot_path, map_path + ".jpg")
+    topshot = os.path.join(topshot_path, trusted_path + ".jpg")
     if not os.path.isfile(topshot):
         # Try to generate the topshot on-demand from the BSP.
-        bsp = os.path.join(maps_dir, map_path + ".bsp")
+        bsp = os.path.join(maps_dir, trusted_path + ".bsp")
         if os.path.isfile(bsp):
             from db_updates import generate_topshot
-            generate_topshot(map_path)
+            generate_topshot(trusted_path)
 
     if os.path.isfile(topshot):
         return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
