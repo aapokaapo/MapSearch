@@ -1,6 +1,6 @@
 # MapSearch
 
-Discord bot for Digital Paintball 2 map discovery and metadata management — built with **py-cord** and slash commands.
+Discord bot and web application for Digital Paintball 2 map discovery and metadata management — built with **py-cord** slash commands and a **FastAPI** backend with a browser-based frontend.
 
 ## Slash commands
 
@@ -27,6 +27,28 @@ Discord bot for Digital Paintball 2 map discovery and metadata management — bu
 - `/op member` — grant user permissions to a member
 - `/deop member` — revoke user permissions from a member
 
+## Web API
+
+The FastAPI backend (`api.py`) exposes a REST API and serves the web frontend.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/maps` | List all maps |
+| `GET` | `/api/maps/search?keyword=…` | Search maps by name, path, message, or tag |
+| `GET` | `/api/maps/{map_path}` | Get info for a specific map |
+| `GET` | `/api/maps/{map_path}/files` | List required files for a map |
+| `GET` | `/api/maps/{map_path}/download` | Download a ZIP archive of the map |
+| `GET` | `/api/maps/{map_path}/bsp` | Stream the raw BSP file |
+| `POST` | `/api/export-bsp?map_name=…` | Generate a topshot radar image |
+
+## Web Frontend
+
+The `frontend/` directory contains a static browser UI served automatically by the API:
+
+- **`index.html`** — search page; query maps and browse results as cards
+- **`map.html`** — map detail page; shows metadata, mapshot, and download link
+- **`viewer.html`** — in-browser 3-D BSP viewer
+
 ## Setup
 
 1. Install Python 3.10+ and pip.
@@ -50,19 +72,27 @@ git submodule update --init --recursive
 python MapSearch.py
 ```
 
+7. *(Optional)* Start the web API:
+
+```bash
+uvicorn api:app --reload
+```
+
 ## Configuration (`config.py`)
 
 | Variable | Description |
 |---|---|
-| `channels` | List of allowed Discord channel IDs |
-| `users` | List of Discord user IDs with elevated permissions |
-| `admins` | List of Discord admin user IDs |
-| `database_path` | Path to the SQLite database file |
+| `pball_path` | Root path of the game installation (`pball/` subfolder) |
 | `map_path` | Path to the `maps/` directory on the server |
-| `pball_path` | Root path of the game installation |
+| `mapshot_path` | Local path for mapshot images |
+| `topshot_path` | Local path for topshot radar images |
+| `database_path` | Path to the SQLite database file |
 | `upload_path` | Destination for uploaded BSP/ZIP files |
-| `mapshot_path` / `public_mapshot_path` | Local and public URL paths for mapshots |
-| `texture_path`, `env_path` | Paths to textures and sky images |
+| `base_url` | Public base URL (e.g. `https://mapsearch.website`) |
+| `public_mapshot_path` | Public URL prefix for mapshot images |
+| `public_topshot_path` | Public URL prefix for topshot images |
+| `public_map_path` | Public URL prefix for map downloads |
+| `admins` | List of Discord admin user IDs |
 
 ## Environment (`.env`)
 
