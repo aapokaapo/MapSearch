@@ -120,12 +120,18 @@ def get_map_image(map_path: str):
     the BSP file if it does not exist yet.  Returns 404 if no image can be
     produced.
     """
+    import urllib.parse
     from fastapi.responses import RedirectResponse
     from config import mapshot_path, topshot_path, map_path as maps_dir
 
+    # Reject paths that could escape the image directories.
+    if ".." in map_path.split("/") or "\\" in map_path:
+        raise HTTPException(status_code=400, detail="Invalid map path")
+    safe_url_path = urllib.parse.quote(map_path, safe="/")
+
     mapshot = os.path.join(mapshot_path, map_path + ".jpg")
     if os.path.isfile(mapshot):
-        return RedirectResponse(url=f"/mapshots/{map_path}.jpg", status_code=302)
+        return RedirectResponse(url=f"/mapshots/{safe_url_path}.jpg", status_code=302)
 
     topshot = os.path.join(topshot_path, map_path + ".jpg")
     if not os.path.isfile(topshot):
@@ -136,7 +142,7 @@ def get_map_image(map_path: str):
             generate_topshot(map_path)
 
     if os.path.isfile(topshot):
-        return RedirectResponse(url=f"/topshots/{map_path}.jpg", status_code=302)
+        return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
 
     raise HTTPException(status_code=404, detail="No image available for this map")
 
