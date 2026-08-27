@@ -52,7 +52,6 @@ async def get_required_files(mapname):
     if external_files:
         for external_file in external_files:
             try:
-                print(external_file)
                 if external_file.endswith(".md2"):
                     temp_model = load_file(pball_path + external_file)
                     linked_skins.append(temp_model.skin_names[0].split("\x00")[0])
@@ -63,10 +62,8 @@ async def get_required_files(mapname):
                     linked_skins.append(external_file.replace(".skm", "") + ".skp")
             except:
                 # file doesnt exist
-                print("some error with linking")
                 pass
 
-    print("linked", mapname, linked_skins)
 
     return required_files, sky, tex_names, external_files, linked_skins
 
@@ -107,7 +104,6 @@ async def print_required_files(map_name: str, conn: Connection, ctx) -> None:
         await send(ctx, "Topshot provided: :no_entry_sign:")
 
     required_mapshot = [row for row in requirement_entries if row[2] == "mapshot"]
-    print(required_mapshot)
     if required_mapshot[0][3] == 1:
         await send(ctx, "Mapshot provided: :white_check_mark:")
     else:
@@ -150,7 +146,6 @@ async def print_required_files(map_name: str, conn: Connection, ctx) -> None:
         missing_files = [x for x in external_files if x[3] == 0 and not x[1].split(".")[0] in [y[1].split(".")[0] for y in provided_files]]
         await send(ctx, 
             "**External models, skins, sound files:**\n```" + " ".join([x[1] for x in provided_files+missing_files]) + "```")
-        print("missing", missing_files)
         if any(missing_files):
             await send(ctx, "**Missing models, skins, sound files:** :no_entry_sign:\n```" + " ".join(
                 [x[1] for x in missing_files]) + "```")
@@ -185,7 +180,6 @@ async def print_requirements(map_name: str, ctx, my_map) -> None:
 
     (required_files, sky, tex_names, exts, linkeds) = await get_required_files(map_name)
 
-    print("sky", sky)
     #sky_provided = all([any([os.path.isfile(env_path+sky+side+ext) for ext in (".png", ".jpg", ".tga", ".pcx", ".wal")]) for side in ["bk", "dn", "ft", "lf", "rt", "up"]])
 
     if sky:
@@ -218,7 +212,6 @@ async def print_requirements(map_name: str, ctx, my_map) -> None:
     await send(ctx, "**Textures**:\n```" + " ".join(tex_names) + "```")
     missing_textures = list()
     for name in tex_names:
-        print(texture_path + name + ".png")
         if not any([os.path.isfile(texture_path + name + x) for x in (".png", ".jpg", ".tga", ".pcx", ".wal")]):
             missing_textures.append(name)
     if missing_textures:
@@ -229,12 +222,10 @@ async def print_requirements(map_name: str, ctx, my_map) -> None:
     # MODELS, SKINS AND NOISE FILES PROVIDED?
     external_files = list()
     for ent in my_map.entities:
-        print(ent.items())
         if "model" in ent.keys() and not ent["model"].startswith("*"):
             model_found = False
             for extension in (".skm", ".md2"):
                 if os.path.isfile(pball_path + ent["model"].split(".")[0] + extension):
-                    print(ent["model"], pball_path + ent["model"].split(".")[0] + extension)
                     external_files.append([ent["model"].split(".")[0]+extension, True])
                     model_found = True
             if not model_found:

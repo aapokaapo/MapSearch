@@ -2,8 +2,7 @@ from socket import socket, AF_INET, SOCK_DGRAM
 from parse import decode_ingame_text as decoder
 import urllib
 from config import server_list
-"""
-ÿÿÿÿprint
+r"""
 \py\!0
 \pr\!2!3
 \po\!1

@@ -4,7 +4,7 @@ import sys
 
 from db_io import *
 import os
-from config import TOKEN, mapshot_path, users, admins, channels
+from config import mapshot_path, users, admins, channels
 from config import texture_path, env_path, pball_path, map_path
 from sqlite3 import Connection
 from typing import List, Iterator
@@ -107,11 +107,8 @@ async def reload_requirements(conn: Connection, ctx=None, mapname=None) -> None:
         for idx, row in enumerate(rows):
             try:
                 found, mapname = find_map_name(row[2], conn)
-                print(row, mapname)
                 if found:
                     await insert_requirements(conn, mapname)
-                else:
-                    print("not found")
                 conn.commit()
             except Exception:
                 print("except!", row)
@@ -129,7 +126,6 @@ async def update_files_provided(conn):
     select_sql = """ select * from media_files where type = ?"""
     rows = select(conn, select_sql, ("mapshot",))
     for row in rows:
-        print(texture_path + row[1])
         if any([os.path.isfile(pball_path + row[1] + x) for x in (".png", ".jpg", ".tga", ".pcx", ".wal")]):
             select_sql = """update media_files set provided=? where file_id=?"""
             select(conn, select_sql, (1, row[0]))
@@ -140,7 +136,6 @@ async def update_files_provided(conn):
     select_sql = """ select * from media_files where type = ?"""
     rows = select(conn, select_sql, ("texture",))
     for row in rows:
-        print(texture_path + row[1])
         if any([os.path.isfile(texture_path + row[1] + x) for x in (".png", ".jpg", ".tga", ".pcx", ".wal")]):
             select_sql = """update media_files set provided=? where file_id=?"""
             select(conn, select_sql, (1, row[0]))
@@ -151,7 +146,6 @@ async def update_files_provided(conn):
     select_sql = """ select * from media_files where type = ?"""
     rows = select(conn, select_sql, ("sky",))
     for row in rows:
-        print(texture_path + row[1])
         if any([os.path.isfile(env_path + row[1] + x) for x in (".png", ".jpg", ".tga", ".pcx", ".wal")]):
             select_sql = """update media_files set provided=? where file_id=?"""
             select(conn, select_sql, (1, row[0]))
@@ -184,7 +178,6 @@ async def update_files_provided(conn):
 
     select_sql = """ select * from media_files where type = ?"""
     rows = select(conn, select_sql, ("linkedfile",))
-    print("rows", rows)
     for row in rows:
         if any([any([os.path.isfile(pball_path + row[1] + x) for x in (".skp", "")]), any(
                 [os.path.isfile(pball_path + row[1].split(".")[0] + x) for x in
@@ -204,7 +197,6 @@ def get_bsps(maps_path: str) -> Iterator[str]:
     for root, directories, filenames in os.walk(maps_path):
         root = root.replace(maps_path, "")
         for directory in directories:
-            # print(os.path.join(root, directory))
             pass
         for filename in filenames:
             if filename.endswith(".bsp"):
@@ -223,7 +215,6 @@ def reload_maps(conn: Connection) -> None:
     # remove map from database that has been deleted
     if map_entries:
         map_entries = [a for b in map_entries for a in b]
-        print(map_entries)
         for row in map_entries:
             if row not in bsps:
                 delete_sql = """delete from tags where map_id in (select map_id from maps where map_path=?)"""
@@ -231,7 +222,6 @@ def reload_maps(conn: Connection) -> None:
 
                 delete_sql = """delete from maps where map_path=?"""
                 select(conn, delete_sql, (row,))
-                print("deleted", row)
 
     # add new bsp to database
     for bsp in bsps:
@@ -246,11 +236,9 @@ def reload_maps(conn: Connection) -> None:
                     # search bsp for first message which is the worldspawn message (hopefully/usually)
                     if "message".lower() in line.lower():
                         tmp = line.split(' ', 1)[-1][1:-2]  # line is '"message" "<data>"', we want just data
-                        print(tmp)
                         message = tmp.replace("\\n", " ")  # strip linebreaks
                         break
             select(conn, insert_sql, (bsp.split("/")[-1], bsp, message))
-            print("inserted", bsp)
 
 async def add_tags(tags: List[str], map_name: str, conn: Connection, ctx) -> None:
     """

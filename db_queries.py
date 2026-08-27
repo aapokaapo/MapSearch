@@ -44,10 +44,6 @@ async def print_map_info(keyword: str, conn: Connection, already_seen: deque, ct
     :param ctx:
     :return: None
     """
-    # get list of all maps (as path relative to maps/)
-    select_sql = """select map_path from maps"""
-    map_memory = [a for b in select(conn, select_sql, ()) for a in b]
-
     if keyword:
         if keyword in ['tutorials', 'beta', 'inprogress']:
             current_map = get_random_map(already_seen, conn, keyword)

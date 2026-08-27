@@ -1,7 +1,7 @@
 import discord
 import serverinfo
-from operator import itemgetter, attrgetter
-from config import trivia_path, public_mapshot_path, public_trivia_path, public_topshot_path, public_map_path
+from operator import attrgetter
+from config import public_mapshot_path, public_trivia_path, public_topshot_path, public_map_path
 
 
 async def split_string(maps_string):
