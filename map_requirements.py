@@ -126,7 +126,7 @@ async def print_required_files(map_name: str, conn: Connection, ctx) -> None:
             await send(ctx, "**Missing required files:** :no_entry_sign:\n```" + " ".join(
                 [x[1] for x in required_files if not x[3]]) + "```")
         else:
-            await send(ctx, "*All required files are provided by whoa.ml* :white_check_mark:")
+            await send(ctx, "*All required files are provided by mapsearch.website* :white_check_mark:")
     else:
         await send(ctx, "**Required files:**\n*No requiredfiles specified*")
 
@@ -137,7 +137,7 @@ async def print_required_files(map_name: str, conn: Connection, ctx) -> None:
         await send(ctx, "**Missing textures:** :no_entry_sign:\n```" + " ".join(
             [x[1] for x in textures if not x[3]]) + "```")
     else:
-        await send(ctx, "*All textures are provided by whoa.ml* :white_check_mark:")
+        await send(ctx, "*All textures are provided by mapsearch.website* :white_check_mark:")
 
     # EXTERNAL FILES PROVIDED
     external_files = [row for row in requirement_entries if row[2] == "externalfile"]
@@ -150,7 +150,7 @@ async def print_required_files(map_name: str, conn: Connection, ctx) -> None:
             await send(ctx, "**Missing models, skins, sound files:** :no_entry_sign:\n```" + " ".join(
                 [x[1] for x in missing_files]) + "```")
         else:
-            await send(ctx, "*All models, skins, sound files are provided by whoa.ml* :white_check_mark:")
+            await send(ctx, "*All models, skins, sound files are provided by mapsearch.website* :white_check_mark:")
     else:
         await send(ctx, "**External models, skins, sound files:**\n*No external files specified*")
 
@@ -163,7 +163,7 @@ async def print_required_files(map_name: str, conn: Connection, ctx) -> None:
             await send(ctx, "**Missing skins and skp files:** :no_entry_sign:\n```" + " ".join(
                 [x[1] for x in linked_skins if not x[3]]) + "```")
         else:
-            await send(ctx, "*All linked files are provided by whoa.ml* :white_check_mark:")
+            await send(ctx, "*All linked files are provided by mapsearch.website* :white_check_mark:")
 
 async def print_requirements(map_name: str, ctx, my_map) -> None:
     """
@@ -204,7 +204,7 @@ async def print_requirements(map_name: str, ctx, my_map) -> None:
                 await send(ctx, 
                     "**Missing required files:** :no_entry_sign:\n```" + " ".join(missing_req) + "```")
             else:
-                await send(ctx, "*All required files are provided by whoa.ml* :white_check_mark:")
+                await send(ctx, "*All required files are provided by mapsearch.website* :white_check_mark:")
     else:
         await send(ctx, "**Required Files**:\n*No requiredfiles specified*")
 
@@ -217,7 +217,7 @@ async def print_requirements(map_name: str, ctx, my_map) -> None:
     if missing_textures:
         await send(ctx, "**Missing textures:** :no_entry_sign:\n```" + " ".join(missing_textures) + "```")
     else:
-        await send(ctx, "*All textures are provided by whoa.ml* :white_check_mark:")
+        await send(ctx, "*All textures are provided by mapsearch.website* :white_check_mark:")
 
     # MODELS, SKINS AND NOISE FILES PROVIDED?
     external_files = list()
@@ -244,7 +244,7 @@ async def print_requirements(map_name: str, ctx, my_map) -> None:
         if external_files:
             await send(ctx, "**Missing files:** :no_entry_sign:\n```" + " ".join(external_files) + "```")
         else:
-            await send(ctx, "*All models, skins and sound files are provided by whoa.ml* :white_check_mark:")
+            await send(ctx, "*All models, skins and sound files are provided by mapsearch.website* :white_check_mark:")
     else:
         await send(ctx, "**External models, skins, sound files:**\n*No external files specified*")
 
@@ -262,4 +262,4 @@ async def print_requirements(map_name: str, ctx, my_map) -> None:
             await send(ctx, "**Missing skins and skp files:** :no_entry_sign:\n```" + " ".join(
                 missing_linkeds) + "```")
         else:
-            await send(ctx, "*All linked files are provided by whoa.ml* :white_check_mark:")
+            await send(ctx, "*All linked files are provided by mapsearch.website* :white_check_mark:")

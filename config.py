@@ -37,13 +37,14 @@ script_path = os.path.join(_PBALL_ROOT, "scripts") + "/"
 map_path = os.path.join(_PBALL_ROOT, "maps") + "/"
 sound_path = os.path.join(_PBALL_ROOT, "sound") + "/"
 database_path = os.path.join(_BASE_DIR, "sqlite_mapdata.db")
-public_mapshot_path = "/mapshots/"
+base_url = "https://mapsearch.website"
+public_mapshot_path = base_url + "/mapshots/"
 local_mapshot_path = mapshot_path
 trivia_path = os.path.join(_PBALL_ROOT, "trivia") + "/"
-public_trivia_path = "/trivia/"
+public_trivia_path = base_url + "/trivia/"
 server_list = ""
-public_topshot_path = "/topshots/"
-public_map_path = "/maps/"
+public_topshot_path = base_url + "/topshots/"
+public_map_path = base_url + "/maps/"
 
 # Path where uploaded BSP/ZIP files are stored
 upload_path = _PBALL_ROOT
