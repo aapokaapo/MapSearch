@@ -8,7 +8,7 @@ from config import map_path, pball_path, topshot_path, mapshot_path, texture_pat
 
 from skm import *
 
-sys.path.append("../image")  # Adds higher directory to python modules path.
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking"))
 from Q2BSP import *
 
 sys.path.append("../md2-importer")  # Adds higher directory to python modules path.

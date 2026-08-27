@@ -11,7 +11,7 @@ from typing import List, Iterator
 from skm import *
 from map_requirements import *
 
-sys.path.append("../image")  # Adds higher directory to python modules path.
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking"))
 from Q2BSP import *
 
 sys.path.append("../md2-importer")  # Adds higher directory to python modules path.
@@ -329,4 +329,3 @@ def insert_mapshot_entry(conn, mapname):
 
     select_sql = """insert into media_files(path, type, provided) select ?, ?, ? where not exists(select * from media_files where path=?)"""
     select(conn, select_sql, (f"pics/mapshots/{mapname}", "mapshot", 1, f"pics/mapshots/{mapname}"))
-

@@ -36,9 +36,15 @@ Discord bot for Digital Paintball 2 map discovery and metadata management — bu
 pip install -r requirements.txt
 ```
 
-3. Copy `.env.example` to `.env` and add the Discord bot token there.
-4. Edit `config.py` and fill in all paths and IDs.
-5. Start the bot:
+3. Initialize the git submodule dependency:
+
+```bash
+git submodule update --init --recursive
+```
+
+4. Copy `.env.example` to `.env` and add the Discord bot token there.
+5. Edit `config.py` and fill in all paths and IDs.
+6. Start the bot:
 
 ```bash
 python MapSearch.py
