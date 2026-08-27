@@ -255,22 +255,8 @@ def _bsp_to_obj_stream(parsed: dict):
         texture_name = tex_info["name"]
         if _is_culled_surface(texture_name, tex_info["flags"]):
             continue
-        if first_edge < 0 or first_edge + num_edges > len(face_edges):
-            continue
-
-        face_indices = []
-        valid = True
-        for fe in face_edges[first_edge:first_edge + num_edges]:
-            edge_idx = fe if fe >= 0 else -fe
-            if edge_idx < 0 or edge_idx >= len(edges):
-                valid = False
-                break
-            vi = edges[edge_idx][0] if fe >= 0 else edges[edge_idx][1]
-            if vi < 0 or vi >= len(vertices):
-                valid = False
-                break
-            face_indices.append(vi)
-        if not valid or len(face_indices) < 3:
+        face_indices = _resolve_face_indices(face_edges, edges, len(vertices), first_edge, num_edges)
+        if face_indices is None:
             continue
 
         if texture_name != last_material:
@@ -299,6 +285,7 @@ _SURF_SKY = 0x0004
 _SURF_TRANS33 = 0x0010
 _SURF_TRANS66 = 0x0020
 _SURF_NODRAW = 0x0080
+_CULLED_TEXTURE_NAMES = {"sky", "hint", "clip", "skip"}
 _BROWSER_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp")
 _QUAKE_TEXTURE_SCALE = 256.0
 
@@ -317,8 +304,34 @@ def _bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
 def _is_culled_surface(texture_name: str, flags: int) -> bool:
     if flags & (_SURF_SKY | _SURF_TRANS33 | _SURF_TRANS66 | _SURF_NODRAW):
         return True
-    lower = texture_name.lower()
-    return lower.startswith("sky") or "/sky" in lower
+    lower = texture_name.lower().replace("\\", "/")
+    if lower.startswith("sky") or "/sky" in lower:
+        return True
+    components = [part for part in lower.split("/") if part]
+    return any(part in _CULLED_TEXTURE_NAMES for part in components)
+
+
+def _resolve_face_indices(
+    face_edges: list[int],
+    edges: list[tuple[int, int]],
+    n_vertices: int,
+    first_edge: int,
+    num_edges: int,
+) -> list[int] | None:
+    if first_edge < 0 or first_edge + num_edges > len(face_edges):
+        return None
+    face_indices: list[int] = []
+    for fe in face_edges[first_edge:first_edge + num_edges]:
+        edge_idx = fe if fe >= 0 else -fe
+        if edge_idx < 0 or edge_idx >= len(edges):
+            return None
+        vi = edges[edge_idx][0] if fe >= 0 else edges[edge_idx][1]
+        if vi < 0 or vi >= n_vertices:
+            return None
+        face_indices.append(vi)
+    if len(face_indices) < 3:
+        return None
+    return face_indices
 
 
 def _resolve_texture_url(texture_name: str) -> str | None:
@@ -380,7 +393,7 @@ def _parse_bsp_geometry(bsp_path: str):
     faces = []
     for i in range(face_len // 20):
         base = face_off + i * 20
-        _, _, first_edge, num_edges, texinfo_idx, _, _ = struct.unpack_from("<Hhihh4si", data, base)
+        _, _, first_edge, num_edges, texinfo_idx, _, _ = struct.unpack_from("<HhiHh4si", data, base)
         faces.append((first_edge, num_edges, texinfo_idx))
 
     return {
@@ -424,22 +437,8 @@ def _build_viewer_mesh_data(bsp_path: str):
         texture_name = tex_info["name"] or "__default__"
         if _is_culled_surface(texture_name, tex_info["flags"]):
             continue
-        if first_edge < 0 or first_edge + num_edges > len(face_edges):
-            continue
-
-        face_indices = []
-        valid = True
-        for fe in face_edges[first_edge:first_edge + num_edges]:
-            edge_idx = fe if fe >= 0 else -fe
-            if edge_idx < 0 or edge_idx >= len(edges):
-                valid = False
-                break
-            vi = edges[edge_idx][0] if fe >= 0 else edges[edge_idx][1]
-            if vi < 0 or vi >= len(vertices):
-                valid = False
-                break
-            face_indices.append(vi)
-        if not valid or len(face_indices) < 3:
+        face_indices = _resolve_face_indices(face_edges, edges, len(vertices), first_edge, num_edges)
+        if face_indices is None:
             continue
 
         material_index = _material_index(texture_name)
@@ -448,12 +447,12 @@ def _build_viewer_mesh_data(bsp_path: str):
             groups.append(current_group)
 
         v0 = face_indices[0]
+        s = tex_info["s"]
+        tv = tex_info["t"]
         for t in range(1, len(face_indices) - 1):
             for vi in (v0, face_indices[t], face_indices[t + 1]):
                 x, y, z = vertices[vi]
                 positions.extend((x, z, -y))
-                s = tex_info["s"]
-                tv = tex_info["t"]
                 u = (x * s[0] + y * s[1] + z * s[2] + s[3]) / _QUAKE_TEXTURE_SCALE
                 v = -((x * tv[0] + y * tv[1] + z * tv[2] + tv[3]) / _QUAKE_TEXTURE_SCALE)
                 uvs.extend((u, v))
@@ -587,12 +586,13 @@ from config import mapshot_path as _MAPSHOTS_DIR, topshot_path as _TOPSHOTS_DIR,
 _MAPSHOTS_DIR = _MAPSHOTS_DIR.rstrip("/")
 _TOPSHOTS_DIR = _TOPSHOTS_DIR.rstrip("/")
 _PBALL_DIR = _PBALL_DIR.rstrip("/")
+_PBALL_TEXTURES_DIR = os.path.join(_PBALL_DIR, "textures")
 if os.path.isdir(_MAPSHOTS_DIR):
     app.mount("/mapshots", StaticFiles(directory=_MAPSHOTS_DIR), name="mapshots")
 if os.path.isdir(_TOPSHOTS_DIR):
     app.mount("/topshots", StaticFiles(directory=_TOPSHOTS_DIR), name="topshots")
-if os.path.isdir(_PBALL_DIR):
-    app.mount("/pball", StaticFiles(directory=_PBALL_DIR), name="pball")
+if os.path.isdir(_PBALL_TEXTURES_DIR):
+    app.mount("/pball/textures", StaticFiles(directory=_PBALL_TEXTURES_DIR), name="pball_textures")
 
 # Serve the frontend after API routes so it does not shadow `/api/*`.
 _FRONTEND_DIR = os.path.join(_BASE_DIR, "frontend")

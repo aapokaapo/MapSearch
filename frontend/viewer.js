@@ -116,8 +116,7 @@ function buildGeometry(meshData) {
 
 async function buildMaterials(materialDefs, base) {
   const textureLoader = new THREE.TextureLoader();
-  const mats = [];
-  for (const def of materialDefs) {
+  const mats = await Promise.all(materialDefs.map(async (def) => {
     const color = hashColor(def.name || "__default__");
     let map = null;
     if (def.texture_url) {
@@ -128,13 +127,13 @@ async function buildMaterials(materialDefs, base) {
         map.wrapT = THREE.RepeatWrapping;
       }
     }
-    mats.push(new THREE.MeshLambertMaterial({
+    return new THREE.MeshLambertMaterial({
       color,
       map,
       side: THREE.FrontSide,
       wireframe: false
-    }));
-  }
+    });
+  }));
   if (!mats.length) {
     mats.push(new THREE.MeshLambertMaterial({ color: 0x4f8ef7, side: THREE.FrontSide, wireframe: false }));
   }
