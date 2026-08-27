@@ -91,6 +91,8 @@ def _collect_map_files(bsp_file: str, map_rel: str, pball: str):
 
     # Read the whole BSP once.
     real_bsp = os.path.realpath(bsp_file)
+    if not real_bsp.startswith(pball + os.sep) and real_bsp != pball:
+        return result
     try:
         with open(real_bsp, "rb") as _f:
             data = _f.read()
