@@ -28,8 +28,8 @@ def _load_env_file(path):
 _load_env_file(_ENV_FILE)
 
 pball_path = _PBALL_ROOT + "/"
-topshot_path = os.path.join(_PBALL_ROOT, "topshots") + "/"
-mapshot_path = os.path.join(_PBALL_ROOT, "mapshots") + "/"
+topshot_path = "/var/www/html/topshots/"
+mapshot_path = os.path.join(_PBALL_ROOT, "pics", "mapshots") + "/"
 map_path = os.path.join(_PBALL_ROOT, "maps") + "/"
 database_path = os.path.join(_BASE_DIR, "sqlite_mapdata.db")
 
