@@ -1,5 +1,6 @@
 import io
 import os
+import struct
 import sys
 import zipfile
 from typing import List, Optional
@@ -233,51 +234,186 @@ def get_bsp_file(map_path: str):
     )
 
 
-def _bsp_to_obj_stream(bsp_path: str):
+def _bsp_to_obj_stream(mesh: dict):
     """Generate OBJ lines from a Quake 2 BSP file using Q2BSP.
 
     Yields chunks of OBJ text so that the response can be streamed without
     building the entire geometry string in memory at once.
     """
-    from Q2BSP import Q2BSP
-
-    bsp = Q2BSP(bsp_path)
-
     yield "# Quake 2 BSP -> OBJ\no map\n"
 
-    # Q2BSP vertices are plain [x, y, z] lists.
-    # Swap Y/Z and negate old Y to convert Quake coords to standard orientation.
-    for v in bsp.vertices:
-        yield f"v {v[0]:.6f} {v[2]:.6f} {-v[1]:.6f}\n"
+    for i in range(0, len(mesh["positions"]), 3):
+        yield f"v {mesh['positions'][i]:.6f} {mesh['positions'][i + 1]:.6f} {mesh['positions'][i + 2]:.6f}\n"
+    for i in range(0, len(mesh["uvs"]), 2):
+        yield f"vt {mesh['uvs'][i]:.6f} {mesh['uvs'][i + 1]:.6f}\n"
 
-    n_verts = len(bsp.vertices)
+    face_base = 1
+    last_material = None
+    for group in mesh["groups"]:
+        material = mesh["materials"][group["material_index"]]["name"]
+        if material != last_material:
+            yield f"usemtl {material}\n"
+            last_material = material
+        n_triangles = group["count"] // 3
+        for _ in range(n_triangles):
+            yield f"f {face_base}/{face_base} {face_base + 1}/{face_base + 1} {face_base + 2}/{face_base + 2}\n"
+            face_base += 3
 
-    # Emit fan-triangulated faces.
-    # In Quake 2 BSP, each face references a range of face_edges entries.
-    # Each face_edge is a signed edge index: positive means use edge's start
-    # vertex; negative means the edge is reversed so use its end vertex.
-    # face.vertices from Q2BSP has a double-indirection bug, so we read the
-    # raw lumps directly.
-    for face in bsp.faces:
-        if face.num_edges < 3:
+
+_SURF_SKY = 0x0004
+_SURF_TRANS33 = 0x0010
+_SURF_TRANS66 = 0x0020
+_SURF_NODRAW = 0x0080
+_BROWSER_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp")
+_QUAKE_TEXTURE_SCALE = 256.0
+
+
+def _bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
+    off = 8 + idx * 8
+    if off + 8 > len(data):
+        return (0, 0)
+    lump_off = int.from_bytes(data[off:off + 4], "little", signed=False)
+    lump_len = int.from_bytes(data[off + 4:off + 8], "little", signed=False)
+    if lump_off < 0 or lump_len < 0 or lump_off + lump_len > len(data):
+        return (0, 0)
+    return (lump_off, lump_len)
+
+
+def _is_culled_surface(texture_name: str, flags: int) -> bool:
+    if flags & (_SURF_SKY | _SURF_TRANS33 | _SURF_TRANS66 | _SURF_NODRAW):
+        return True
+    lower = texture_name.lower()
+    return lower.startswith("sky") or "/sky" in lower
+
+
+def _resolve_texture_url(texture_name: str) -> str | None:
+    from config import pball_path
+    pball_root = os.path.realpath(pball_path.rstrip("/"))
+    tex_rel = texture_name.strip("/").replace("\\", "/")
+    if not tex_rel:
+        return None
+    tex_dir, tex_base = os.path.split(tex_rel)
+    candidates = []
+    for ext in _BROWSER_TEXTURE_EXTS:
+        if tex_dir:
+            candidates.append((os.path.join("textures", tex_dir, "hr4", f"{tex_base}.{ext}"), f"/pball/textures/{tex_dir}/hr4/{tex_base}.{ext}"))
+        candidates.append((os.path.join("textures", f"{tex_rel}.{ext}"), f"/pball/textures/{tex_rel}.{ext}"))
+
+    for rel_disk, rel_url in candidates:
+        disk_path = os.path.realpath(os.path.join(pball_root, rel_disk))
+        if not disk_path.startswith(pball_root + os.sep):
             continue
-        face_edge_slice = bsp.face_edges[face.first_edge:face.first_edge + face.num_edges]
-        indices = []
+        if os.path.isfile(disk_path):
+            return rel_url
+    return None
+
+
+def _build_viewer_mesh_data(bsp_path: str):
+    with open(bsp_path, "rb") as f:
+        data = f.read()
+    if data[:4] != b"IBSP":
+        raise HTTPException(status_code=422, detail="Unsupported BSP format")
+
+    vert_off, vert_len = _bsp_lump(data, 2)
+    edge_off, edge_len = _bsp_lump(data, 11)
+    face_edge_off, face_edge_len = _bsp_lump(data, 12)
+    face_off, face_len = _bsp_lump(data, 6)
+    tex_off, tex_len = _bsp_lump(data, 5)
+
+    if not all((vert_len, edge_len, face_edge_len, face_len, tex_len)):
+        raise HTTPException(status_code=422, detail="Missing BSP geometry lumps")
+    if vert_len % 12 or edge_len % 4 or face_edge_len % 4 or face_len % 20 or tex_len % 76:
+        raise HTTPException(status_code=422, detail="Corrupt BSP lump sizes")
+
+    vertices = [struct.unpack_from("<fff", data, vert_off + i * 12) for i in range(vert_len // 12)]
+    edges = [struct.unpack_from("<HH", data, edge_off + i * 4) for i in range(edge_len // 4)]
+    face_edges = [struct.unpack_from("<i", data, face_edge_off + i * 4)[0] for i in range(face_edge_len // 4)]
+
+    tex_infos = []
+    for i in range(tex_len // 76):
+        base = tex_off + i * 76
+        vals = struct.unpack_from("<8fii32si", data, base)
+        name = vals[10].decode("ascii", "ignore").rstrip("\x00")
+        tex_infos.append(
+            {
+                "s": vals[0:4],
+                "t": vals[4:8],
+                "flags": vals[8],
+                "name": name,
+            }
+        )
+
+    positions: list[float] = []
+    uvs: list[float] = []
+    groups = []
+    materials = []
+    material_index_by_name = {}
+    current_group = None
+    vertex_cursor = 0
+
+    def _material_index(texture_name: str) -> int:
+        idx = material_index_by_name.get(texture_name)
+        if idx is not None:
+            return idx
+        idx = len(materials)
+        material_index_by_name[texture_name] = idx
+        materials.append({"name": texture_name, "texture_url": _resolve_texture_url(texture_name)})
+        return idx
+
+    for i in range(face_len // 20):
+        base = face_off + i * 20
+        _, _, first_edge, num_edges, texinfo_idx, _, _ = struct.unpack_from("<Hhihh4si", data, base)
+        if num_edges < 3 or texinfo_idx < 0 or texinfo_idx >= len(tex_infos):
+            continue
+        tex_info = tex_infos[texinfo_idx]
+        texture_name = tex_info["name"] or "__default__"
+        if _is_culled_surface(texture_name, tex_info["flags"]):
+            continue
+        if first_edge < 0 or first_edge + num_edges > len(face_edges):
+            continue
+
+        face_indices = []
         valid = True
-        for fe in face_edge_slice:
-            if fe >= 0:
-                vi = bsp.edge_list[fe][0]
-            else:
-                vi = bsp.edge_list[-fe][1]
-            if vi < 0 or vi >= n_verts:
+        for fe in face_edges[first_edge:first_edge + num_edges]:
+            edge_idx = fe if fe >= 0 else -fe
+            if edge_idx < 0 or edge_idx >= len(edges):
                 valid = False
                 break
-            indices.append(vi + 1)  # OBJ indices are 1-based
-        if not valid or len(indices) < 3:
+            vi = edges[edge_idx][0] if fe >= 0 else edges[edge_idx][1]
+            if vi < 0 or vi >= len(vertices):
+                valid = False
+                break
+            face_indices.append(vi)
+        if not valid or len(face_indices) < 3:
             continue
-        v0 = indices[0]
-        for t in range(1, len(indices) - 1):
-            yield f"f {v0} {indices[t]} {indices[t + 1]}\n"
+
+        material_index = _material_index(texture_name)
+        if current_group is None or current_group["material_index"] != material_index:
+            current_group = {"start": vertex_cursor, "count": 0, "material_index": material_index}
+            groups.append(current_group)
+
+        v0 = face_indices[0]
+        for t in range(1, len(face_indices) - 1):
+            for vi in (v0, face_indices[t], face_indices[t + 1]):
+                x, y, z = vertices[vi]
+                positions.extend((x, z, -y))
+                s = tex_info["s"]
+                tv = tex_info["t"]
+                u = (x * s[0] + y * s[1] + z * s[2] + s[3]) / _QUAKE_TEXTURE_SCALE
+                v = -((x * tv[0] + y * tv[1] + z * tv[2] + tv[3]) / _QUAKE_TEXTURE_SCALE)
+                uvs.extend((u, v))
+            current_group["count"] += 3
+            vertex_cursor += 3
+
+    if not positions:
+        raise HTTPException(status_code=422, detail="No drawable faces found in BSP")
+
+    return {
+        "positions": positions,
+        "uvs": uvs,
+        "groups": groups,
+        "materials": materials,
+    }
 
 
 @app.get("/api/maps/{map_path:path}/obj")
@@ -293,19 +429,32 @@ def get_map_obj(map_path: str, session: Session = Depends(get_session)):
     if not os.path.isfile(bsp_file):
         raise HTTPException(status_code=404, detail="BSP file not found")
 
-    from Q2BSP import Q2BSP
-
     try:
-        Q2BSP(bsp_file)
+        mesh = _build_viewer_mesh_data(bsp_file)
     except Exception as exc:
         raise HTTPException(status_code=422, detail="Could not parse BSP file") from exc
 
     map_name = trusted_path.split("/")[-1]
     return StreamingResponse(
-        _bsp_to_obj_stream(bsp_file),
+        _bsp_to_obj_stream(mesh),
         media_type="model/obj",
         headers={"Content-Disposition": f'inline; filename="{map_name}.obj"'},
     )
+
+
+@app.get("/api/maps/{map_path:path}/viewer-mesh")
+def get_map_viewer_mesh(map_path: str, session: Session = Depends(get_session)):
+    db_map = session.exec(select(Map).where(Map.map_path == map_path)).first()
+    if not db_map:
+        raise HTTPException(status_code=404, detail="Map not found")
+
+    from config import map_path as maps_dir
+    trusted_path = db_map.map_path
+    bsp_file = os.path.join(maps_dir, trusted_path + ".bsp")
+    if not os.path.isfile(bsp_file):
+        raise HTTPException(status_code=404, detail="BSP file not found")
+
+    return _build_viewer_mesh_data(bsp_file)
 
 
 @app.get("/api/maps/{map_path:path}/image")
@@ -382,14 +531,17 @@ def export_bsp(map_name: str, session: Session = Depends(get_session)):
 
 
 # Serve mapshots and topshots before the frontend catch-all.
-from config import mapshot_path as _MAPSHOTS_DIR, topshot_path as _TOPSHOTS_DIR
+from config import mapshot_path as _MAPSHOTS_DIR, topshot_path as _TOPSHOTS_DIR, pball_path as _PBALL_DIR
 # Strip trailing slash so StaticFiles receives a plain directory path.
 _MAPSHOTS_DIR = _MAPSHOTS_DIR.rstrip("/")
 _TOPSHOTS_DIR = _TOPSHOTS_DIR.rstrip("/")
+_PBALL_DIR = _PBALL_DIR.rstrip("/")
 if os.path.isdir(_MAPSHOTS_DIR):
     app.mount("/mapshots", StaticFiles(directory=_MAPSHOTS_DIR), name="mapshots")
 if os.path.isdir(_TOPSHOTS_DIR):
     app.mount("/topshots", StaticFiles(directory=_TOPSHOTS_DIR), name="topshots")
+if os.path.isdir(_PBALL_DIR):
+    app.mount("/pball", StaticFiles(directory=_PBALL_DIR), name="pball")
 
 # Serve the frontend after API routes so it does not shadow `/api/*`.
 _FRONTEND_DIR = os.path.join(_BASE_DIR, "frontend")

@@ -1,5 +1,5 @@
 // viewer.js — Three.js BSP 3D viewer
-// Fetches OBJ geometry from the server and renders it.
+// Fetches mesh + material data from the server and renders it.
 
 async function initViewer(base, mapPath) {
   const canvas = document.getElementById("viewer-canvas");
@@ -56,23 +56,22 @@ async function initViewer(base, mapPath) {
   }
   animate();
 
-  // ── Load OBJ from server (BSP → OBJ converted server-side) ──────
+  // ── Load mesh from server ────────────────────────────────────────
   try {
-    loadMsg.textContent = "Converting BSP to OBJ…";
-    const url = `${base}/api/maps/${encodeURIComponent(mapPath)}/obj`;
+    loadMsg.textContent = "Building BSP mesh…";
+    const url = `${base}/api/maps/${encodeURIComponent(mapPath)}/viewer-mesh`;
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const objText = await resp.text();
+    const meshData = await resp.json();
 
     loadMsg.textContent = "Parsing geometry…";
-    const geo = parseOBJGeometry(objText);
+    const geo = buildGeometry(meshData);
+    const materials = await buildMaterials(meshData.materials || [], base);
 
-    if (!geo) throw new Error("Could not parse OBJ geometry.");
+    if (!geo) throw new Error("Could not parse geometry.");
 
-    const mesh = new THREE.Mesh(
-      geo,
-      new THREE.MeshLambertMaterial({ color: 0x4f8ef7, side: THREE.DoubleSide, wireframe: false })
-    );
+    const mesh = new THREE.Mesh(geo, materials);
+    const applySmartCulling = createSmartCullingUpdater(mesh, geo, camera);
     scene.add(mesh);
 
     // Center camera on bounding box
@@ -86,6 +85,8 @@ async function initViewer(base, mapPath) {
     camera.position.copy(center).add(new THREE.Vector3(0, maxDim * 0.4, maxDim * 1.2));
     controls.target.copy(center);
     controls.update();
+    applySmartCulling();
+    controls.addEventListener("change", applySmartCulling);
 
     overlay.classList.add("hidden");
   } catch (err) {
@@ -93,42 +94,80 @@ async function initViewer(base, mapPath) {
   }
 }
 
-// ── Minimal OBJ parser ─────────────────────────────────────────────
-// Supports "v" and "f" directives; faces may be triangles or simple polygons
-// (fan-triangulated).  Handles only vertex indices (no UV or normal indices).
-function parseOBJGeometry(text) {
-  const verts = [];   // flat [x, y, z, ...]
-  const positions = [];
-
-  for (const rawLine of text.split("\n")) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-
-    const parts = line.split(/\s+/);
-    if (parts[0] === "v" && parts.length >= 4) {
-      verts.push(parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3]));
-    } else if (parts[0] === "f" && parts.length >= 4) {
-      // Strip any "vi/vt/vn" → just the vertex index (1-based)
-      const indices = parts.slice(1).map((p) => parseInt(p.split("/")[0], 10) - 1);
-      const numV = verts.length / 3;
-      const v0 = indices[0];
-      if (v0 < 0 || v0 >= numV) continue;
-      for (let t = 1; t < indices.length - 1; t++) {
-        const v1 = indices[t];
-        const v2 = indices[t + 1];
-        if (v1 < 0 || v1 >= numV || v2 < 0 || v2 >= numV) continue;
-        for (const vi of [v0, v1, v2]) {
-          const base = vi * 3;
-          positions.push(verts[base], verts[base + 1], verts[base + 2]);
-        }
-      }
-    }
-  }
-
-  if (!positions.length) return null;
-
+function buildGeometry(meshData) {
+  const positions = meshData.positions || [];
+  const uvs = meshData.uvs || [];
+  if (!positions.length || positions.length % 3 !== 0) return null;
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(positions), 3));
+  if (uvs.length === (positions.length / 3) * 2) {
+    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(new Float32Array(uvs), 2));
+  }
+  if (Array.isArray(meshData.groups)) {
+    geometry.clearGroups();
+    for (const group of meshData.groups) {
+      if (!Number.isInteger(group.start) || !Number.isInteger(group.count) || !Number.isInteger(group.material_index)) continue;
+      geometry.addGroup(group.start, group.count, group.material_index);
+    }
+  }
   geometry.computeVertexNormals();
   return geometry;
+}
+
+async function buildMaterials(materialDefs, base) {
+  const textureLoader = new THREE.TextureLoader();
+  const mats = [];
+  for (const def of materialDefs) {
+    const color = hashColor(def.name || "__default__");
+    let map = null;
+    if (def.texture_url) {
+      const textureUrl = `${base}${def.texture_url}`;
+      map = await loadTexture(textureLoader, textureUrl);
+      if (map) {
+        map.wrapS = THREE.RepeatWrapping;
+        map.wrapT = THREE.RepeatWrapping;
+      }
+    }
+    mats.push(new THREE.MeshLambertMaterial({
+      color,
+      map,
+      side: THREE.FrontSide,
+      wireframe: false
+    }));
+  }
+  if (!mats.length) {
+    mats.push(new THREE.MeshLambertMaterial({ color: 0x4f8ef7, side: THREE.FrontSide, wireframe: false }));
+  }
+  return mats;
+}
+
+function loadTexture(loader, url) {
+  return new Promise((resolve) => {
+    loader.load(url, resolve, undefined, () => resolve(null));
+  });
+}
+
+function createSmartCullingUpdater(mesh, geometry, camera) {
+  geometry.computeBoundingBox();
+  const box = geometry.boundingBox.clone();
+  return () => {
+    const inside = box.containsPoint(mesh.worldToLocal(camera.position.clone()));
+    const targetSide = inside ? THREE.DoubleSide : THREE.FrontSide;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) {
+      if (material.side !== targetSide) {
+        material.side = targetSide;
+        material.needsUpdate = true;
+      }
+    }
+  };
+}
+
+function hashColor(text) {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = ((hash << 5) - hash) + text.charCodeAt(i);
+  const r = 120 + ((hash >> 16) & 0x7f);
+  const g = 120 + ((hash >> 8) & 0x7f);
+  const b = 120 + (hash & 0x7f);
+  return (r << 16) | (g << 8) | b;
 }
