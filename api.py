@@ -293,12 +293,12 @@ _OBJ_UV_SCALE = 256.0  # default texel-to-UV divisor for OBJ export (no image si
 # value is the float multiplier applied to map.repeat in the viewer (< 1 → texture tiles
 # less, compensating for an image that is smaller than expected).
 _TEXTURE_UV_SCALE_OVERRIDES: dict[str, float] = {
-    "chainlink1": 0.125,  # default image is 8× smaller than the BSP UV scale assumes
+    "chainlink1": 8,  # default image is 8× smaller than the BSP UV scale assumes
 }
 # Per-texture hr4 UV scale overrides.  Used instead of the default hr4 scale of 4 when the
 # hr4 image is already at the canonical BSP UV size (i.e. not a 4× upscale of the original).
 _TEXTURE_HR4_UV_SCALE_OVERRIDES: dict[str, float] = {
-    "chainlink1": 0.25,  # hr4 image (128×128) is the canonical size; no extra scaling needed
+    "chainlink1": 16,  # hr4 image (128×128) is the canonical size; no extra scaling needed
 }
 
 
