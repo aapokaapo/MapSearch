@@ -453,7 +453,7 @@ def _build_viewer_mesh_data(bsp_path: str):
                 x, y, z = vertices[vi]
                 positions.extend((x, z, -y))
                 u = x * s[0] + y * s[1] + z * s[2] + s[3]
-                v = -((x * tv[0] + y * tv[1] + z * tv[2] + tv[3]))
+                v = -(x * tv[0] + y * tv[1] + z * tv[2] + tv[3])
                 uvs.extend((u, v))
             current_group["count"] += 3
             vertex_cursor += 3
