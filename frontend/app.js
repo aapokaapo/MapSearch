@@ -21,13 +21,12 @@ function makeCard(map) {
   const BASE = window.BASE_URL || "";
   const card = document.createElement("div");
   card.className = "map-card";
-  const topshot = `${BASE}/topshots/${map.map_path}.jpg`;
-  const mapshot = `${BASE}/mapshots/${map.map_path}.jpg`;
+  const imageUrl = `${BASE}/api/maps/${encodeURIComponent(map.map_path)}/image`;
   const tags = (map.tags || [])
     .map((t) => `<span class="tag">${escHtml(t.tag_name)}</span>`)
     .join("");
   card.innerHTML = `
-    <img src="${topshot}" onerror="this.src='${mapshot}';this.onerror=null" alt="${escHtml(map.map_name)}" loading="lazy" />
+    <img src="${imageUrl}" alt="${escHtml(map.map_name)}" loading="lazy" />
     <div class="card-body">
       <div class="card-title">${escHtml(map.map_name)}</div>
       <div class="card-msg">${escHtml((map.message || "").slice(0, 80))}${(map.message || "").length > 80 ? "…" : ""}</div>

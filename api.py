@@ -12,7 +12,8 @@ from sqlmodel import Session, select
 from database import get_session
 from models import Map, Tag
 
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking"))
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(_BASE_DIR, "bsp_hacking"))
 
 app = FastAPI(title="MapSearch API")
 
@@ -111,6 +112,47 @@ def get_bsp_file(map_path: str):
     )
 
 
+@app.get("/api/maps/{map_path:path}/image")
+def get_map_image(map_path: str, session: Session = Depends(get_session)):
+    """Return the best available image for a map.
+
+    Prefers a mapshot; falls back to a topshot, generating one on-demand from
+    the BSP file if it does not exist yet.  Returns 404 if no image can be
+    produced.
+    """
+    import urllib.parse
+    from fastapi.responses import RedirectResponse
+    from config import mapshot_path, topshot_path, map_path as maps_dir
+
+    # Resolve to a trusted DB record so that path used for file I/O and
+    # redirects comes from our database, not directly from user input.
+    db_map = session.exec(
+        select(Map).where((Map.map_path == map_path) | (Map.map_name == map_path))
+    ).first()
+    if not db_map:
+        raise HTTPException(status_code=404, detail="Map not found")
+
+    trusted_path = db_map.map_path
+    safe_url_path = urllib.parse.quote(trusted_path, safe="/")
+
+    mapshot = os.path.join(mapshot_path, trusted_path + ".jpg")
+    if os.path.isfile(mapshot):
+        return RedirectResponse(url=f"/mapshots/{safe_url_path}.jpg", status_code=302)
+
+    topshot = os.path.join(topshot_path, trusted_path + ".jpg")
+    if not os.path.isfile(topshot):
+        # Try to generate the topshot on-demand from the BSP.
+        bsp = os.path.join(maps_dir, trusted_path + ".bsp")
+        if os.path.isfile(bsp):
+            from db_updates import generate_topshot
+            generate_topshot(trusted_path)
+
+    if os.path.isfile(topshot):
+        return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
+
+    raise HTTPException(status_code=404, detail="No image available for this map")
+
+
 @app.get("/api/maps/{map_path:path}", response_model=Map)
 def get_map(map_path: str, session: Session = Depends(get_session)):
     """Return info for a specific map by its path or name."""
@@ -143,7 +185,16 @@ def export_bsp(map_name: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=500, detail=f"BSP processing failed: {str(e)}")
 
 
+# Serve mapshots and topshots before the frontend catch-all.
+_PBALL_DIR = os.path.join(_BASE_DIR, "pball")
+_MAPSHOTS_DIR = os.path.join(_PBALL_DIR, "mapshots")
+_TOPSHOTS_DIR = os.path.join(_PBALL_DIR, "topshots")
+if os.path.isdir(_MAPSHOTS_DIR):
+    app.mount("/mapshots", StaticFiles(directory=_MAPSHOTS_DIR), name="mapshots")
+if os.path.isdir(_TOPSHOTS_DIR):
+    app.mount("/topshots", StaticFiles(directory=_TOPSHOTS_DIR), name="topshots")
+
 # Serve the frontend after API routes so it does not shadow `/api/*`.
-_FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+_FRONTEND_DIR = os.path.join(_BASE_DIR, "frontend")
 if os.path.isdir(_FRONTEND_DIR):
     app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
