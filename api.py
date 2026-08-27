@@ -72,21 +72,27 @@ def _collect_map_files(bsp_file: str, map_rel: str, pball: str):
     """
     import re as _re
 
-    pball = pball.rstrip("/")
+    pball = os.path.realpath(pball.rstrip("/"))
     result = []
     seen_arcnames: set = set()
 
     def _add(disk_path: str, arcname: str) -> None:
-        if arcname not in seen_arcnames and os.path.isfile(disk_path):
+        # Resolve the path and ensure it stays within the pball tree to
+        # prevent path traversal via maliciously crafted BSP content.
+        real = os.path.realpath(disk_path)
+        if not real.startswith(pball + os.sep) and real != pball:
+            return
+        if arcname not in seen_arcnames and os.path.isfile(real):
             seen_arcnames.add(arcname)
-            result.append((disk_path, arcname))
+            result.append((real, arcname))
 
     # Always include the BSP itself.
     _add(bsp_file, f"pball/maps/{map_rel}.bsp")
 
     # Read the whole BSP once.
+    real_bsp = os.path.realpath(bsp_file)
     try:
-        with open(bsp_file, "rb") as _f:
+        with open(real_bsp, "rb") as _f:
             data = _f.read()
     except OSError:
         return result
@@ -103,6 +109,8 @@ def _collect_map_files(bsp_file: str, map_rel: str, pball: str):
 
     # ── Textures (lump 5 – tex_info, 76 bytes each, name at +40, 32 bytes) ──
     tex_off, tex_len = _lump(5)
+    if tex_off + tex_len > len(data):
+        return result
     textures: set = set()
     for i in range(tex_len // 76):
         base = tex_off + i * 76
@@ -120,6 +128,8 @@ def _collect_map_files(bsp_file: str, map_rel: str, pball: str):
 
     # ── Entity lump (lump 0) – extract sound / sky references ───────────────
     ent_off, ent_len = _lump(0)
+    if ent_off + ent_len > len(data):
+        return result
     entity_text = data[ent_off : ent_off + ent_len].decode("cp1252", "ignore").rstrip("\x00")
 
     sounds: set = set()
@@ -130,7 +140,7 @@ def _collect_map_files(bsp_file: str, map_rel: str, pball: str):
             key, value = kv
             if key in ("noise", "noise1", "noise2", "noise3", "noise4", "sound") and value:
                 sounds.add(value)
-            elif key == "sky" and value:
+            elif key == "sky" and value and sky is None:
                 sky = value
 
     # Sounds – value may already include extension.
@@ -158,7 +168,7 @@ def _collect_map_files(bsp_file: str, map_rel: str, pball: str):
     scripts_dir = os.path.join(pball, "scripts")
     if os.path.isdir(scripts_dir):
         for fname in sorted(os.listdir(scripts_dir)):
-            if fname.startswith(map_name + ".") or fname == map_name:
+            if fname.startswith(map_name + ".") or fname.startswith(map_name + "_"):
                 _add(os.path.join(scripts_dir, fname), f"pball/scripts/{fname}")
 
     return result
