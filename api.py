@@ -288,6 +288,13 @@ _SURF_NODRAW = 0x0080
 _CULLED_TEXTURE_NAMES = {"sky", "hint", "clip", "skip"}
 _BROWSER_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp")
 _OBJ_UV_SCALE = 256.0  # default texel-to-UV divisor for OBJ export (no image size available)
+# Per-texture UV scale overrides for non-hr4 textures whose on-disk image is a different
+# size than the BSP UV coordinates assume.  Key is the base texture name (no path, no ext),
+# value is the float multiplier applied to map.repeat in the viewer (< 1 → texture tiles
+# less, compensating for an image that is smaller than expected).
+_TEXTURE_UV_SCALE_OVERRIDES: dict[str, float] = {
+    "chainlink1": 0.25,  # default image is 4× smaller than the BSP UV scale assumes
+}
 
 
 def _bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
@@ -353,7 +360,8 @@ def _resolve_texture_url(texture_name: str) -> tuple[str | None, int]:
     for ext in _BROWSER_TEXTURE_EXTS:
         if tex_dir:
             candidates.append((os.path.join("textures", tex_dir, "hr4", f"{tex_base}.{ext}"), f"/pball/textures/{tex_dir}/hr4/{tex_base}.{ext}", 4))
-        candidates.append((os.path.join("textures", f"{tex_rel}.{ext}"), f"/pball/textures/{tex_rel}.{ext}", 1))
+        default_scale = _TEXTURE_UV_SCALE_OVERRIDES.get(tex_base.lower(), 1)
+        candidates.append((os.path.join("textures", f"{tex_rel}.{ext}"), f"/pball/textures/{tex_rel}.{ext}", default_scale))
 
     for rel_disk, rel_url, uv_scale in candidates:
         disk_path = os.path.realpath(os.path.join(pball_root, rel_disk))
