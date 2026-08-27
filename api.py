@@ -288,6 +288,18 @@ _SURF_NODRAW = 0x0080
 _CULLED_TEXTURE_NAMES = {"sky", "hint", "clip", "skip"}
 _BROWSER_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp")
 _OBJ_UV_SCALE = 256.0  # default texel-to-UV divisor for OBJ export (no image size available)
+# Per-texture UV scale overrides for non-hr4 textures whose on-disk image is a different
+# size than the BSP UV coordinates assume.  Key is the base texture name (no path, no ext),
+# value is the float multiplier applied to map.repeat in the viewer (< 1 → texture tiles
+# less, compensating for an image that is smaller than expected).
+_TEXTURE_UV_SCALE_OVERRIDES: dict[str, float] = {
+    "chainlink1": 0.25,  # default image is 4× smaller than the BSP UV scale assumes
+}
+# Per-texture hr4 UV scale overrides.  Used instead of the default hr4 scale of 4 when the
+# hr4 image is already at the canonical BSP UV size (i.e. not a 4× upscale of the original).
+_TEXTURE_HR4_UV_SCALE_OVERRIDES: dict[str, float] = {
+    "chainlink1": 1,  # hr4 image (128×128) is the canonical size; no extra scaling needed
+}
 
 
 def _bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
@@ -342,26 +354,28 @@ def _resolve_face_indices(
     return face_indices
 
 
-def _resolve_texture_url(texture_name: str) -> str | None:
+def _resolve_texture_url(texture_name: str) -> tuple[str | None, int]:
     from config import pball_path
     pball_root = os.path.realpath(pball_path.rstrip("/"))
     tex_rel = texture_name.strip("/").replace("\\", "/")
     if not tex_rel:
-        return None
+        return None, 1
     tex_dir, tex_base = os.path.split(tex_rel)
     candidates = []
     for ext in _BROWSER_TEXTURE_EXTS:
         if tex_dir:
-            candidates.append((os.path.join("textures", tex_dir, "hr4", f"{tex_base}.{ext}"), f"/pball/textures/{tex_dir}/hr4/{tex_base}.{ext}"))
-        candidates.append((os.path.join("textures", f"{tex_rel}.{ext}"), f"/pball/textures/{tex_rel}.{ext}"))
+            hr4_scale = _TEXTURE_HR4_UV_SCALE_OVERRIDES.get(tex_base.lower(), 4)
+            candidates.append((os.path.join("textures", tex_dir, "hr4", f"{tex_base}.{ext}"), f"/pball/textures/{tex_dir}/hr4/{tex_base}.{ext}", hr4_scale))
+        default_scale = _TEXTURE_UV_SCALE_OVERRIDES.get(tex_base.lower(), 1)
+        candidates.append((os.path.join("textures", f"{tex_rel}.{ext}"), f"/pball/textures/{tex_rel}.{ext}", default_scale))
 
-    for rel_disk, rel_url in candidates:
+    for rel_disk, rel_url, uv_scale in candidates:
         disk_path = os.path.realpath(os.path.join(pball_root, rel_disk))
         if not disk_path.startswith(pball_root + os.sep):
             continue
         if os.path.isfile(disk_path):
-            return rel_url
-    return None
+            return rel_url, uv_scale
+    return None, 1
 
 
 def _parse_bsp_geometry(bsp_path: str):
@@ -436,7 +450,8 @@ def _build_viewer_mesh_data(bsp_path: str):
             return idx
         idx = len(materials)
         material_key_to_index[key] = idx
-        materials.append({"name": texture_name, "texture_url": _resolve_texture_url(texture_name), "opacity": opacity})
+        texture_url, uv_scale = _resolve_texture_url(texture_name)
+        materials.append({"name": texture_name, "texture_url": texture_url, "uv_scale": uv_scale, "opacity": opacity})
         return idx
 
     for first_edge, num_edges, texinfo_idx in faces:
@@ -460,7 +475,7 @@ def _build_viewer_mesh_data(bsp_path: str):
         s = tex_info["s"]
         tv = tex_info["t"]
         for t in range(1, len(face_indices) - 1):
-            for vi in (v0, face_indices[t], face_indices[t + 1]):
+            for vi in (v0, face_indices[t + 1], face_indices[t]):
                 x, y, z = vertices[vi]
                 positions.extend((x, z, -y))
                 u = x * s[0] + y * s[1] + z * s[2] + s[3]

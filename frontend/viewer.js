@@ -124,7 +124,8 @@ async function buildMaterials(materialDefs, base) {
         map.wrapT = THREE.RepeatWrapping;
         const w = map.image.width || 256;
         const h = map.image.height || 256;
-        map.repeat.set(1 / w, 1 / h);
+        const uvScale = def.uv_scale || 1;
+        map.repeat.set(uvScale / w, uvScale / h);
       }
     }
     return new THREE.MeshLambertMaterial({
