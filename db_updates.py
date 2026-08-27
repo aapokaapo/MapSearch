@@ -5,7 +5,7 @@ import sys
 from sqlmodel import Session, select
 
 from config import map_path, topshot_path, pball_path
-from models import Map
+from models import Map, Tag
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking"))
 
@@ -36,6 +36,44 @@ def add_map_to_db(map_rel: str, session: Session) -> None:
     )
     session.add(map_entry)
     session.commit()
+
+
+def add_tag(map_name: str, tag: str, session: Session) -> str:
+    """
+    Add a tag to a map. Returns a status message.
+    """
+    map_entry = session.exec(select(Map).where(Map.map_name == map_name)).first()
+    if not map_entry:
+        return f"Map `{map_name}` not found in the database."
+
+    existing = session.exec(
+        select(Tag).where(Tag.map_id == map_entry.map_id, Tag.tag_name == tag)
+    ).first()
+    if existing:
+        return f"Tag `{tag}` already exists on `{map_name}`."
+
+    session.add(Tag(map_id=map_entry.map_id, tag_name=tag))
+    session.commit()
+    return f"✅ Tag `{tag}` added to `{map_name}`."
+
+
+def remove_tag(map_name: str, tag: str, session: Session) -> str:
+    """
+    Remove a tag from a map. Returns a status message.
+    """
+    map_entry = session.exec(select(Map).where(Map.map_name == map_name)).first()
+    if not map_entry:
+        return f"Map `{map_name}` not found in the database."
+
+    existing = session.exec(
+        select(Tag).where(Tag.map_id == map_entry.map_id, Tag.tag_name == tag)
+    ).first()
+    if not existing:
+        return f"Tag `{tag}` does not exist on `{map_name}`."
+
+    session.delete(existing)
+    session.commit()
+    return f"✅ Tag `{tag}` removed from `{map_name}`."
 
 
 def generate_topshot(map_rel: str) -> None:

@@ -8,7 +8,7 @@ from config import TOKEN, upload_path, map_path
 from collections import deque
 from database import engine
 from db_queries import print_map_search, print_map_info
-from db_updates import add_map_to_db, generate_topshot
+from db_updates import add_map_to_db, generate_topshot, add_tag, remove_tag
 from sqlmodel import Session
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking"))
@@ -114,6 +114,40 @@ async def upload_map(
 
     if saved_bsps:
         await ctx.channel.send(f"📦 Database updated and topshots generated for: {', '.join(f'`{m}`' for m in saved_bsps)}")
+
+
+# ---------------------------------------------------------------------------
+# Tag management commands (administrator only)
+# ---------------------------------------------------------------------------
+
+@bot.slash_command(
+    description="Add a tag to a map (admin only)",
+    default_member_permissions=discord.Permissions(administrator=True),
+)
+async def add_map_tag(
+    ctx: discord.ApplicationContext,
+    map_name: str,
+    tag: str,
+):
+    await ctx.defer()
+    with Session(engine) as session:
+        msg = add_tag(map_name, tag, session)
+    await ctx.respond(msg)
+
+
+@bot.slash_command(
+    description="Remove a tag from a map (admin only)",
+    default_member_permissions=discord.Permissions(administrator=True),
+)
+async def remove_map_tag(
+    ctx: discord.ApplicationContext,
+    map_name: str,
+    tag: str,
+):
+    await ctx.defer()
+    with Session(engine) as session:
+        msg = remove_tag(map_name, tag, session)
+    await ctx.respond(msg)
 
 
 # ---------------------------------------------------------------------------
