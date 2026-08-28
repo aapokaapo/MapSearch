@@ -20,7 +20,7 @@ Discord bot and web application for Digital Paintball 2 map discovery and metada
 - `/mapshot map image` — upload a mapshot image
 
 ### Admins
-- `/upload_map file [subfolder]` — upload a `.bsp` or `.zip` file with the expected game file structure
+- `/upload_map file [subfolder] [map_name]` — upload a `.bsp`, `.zip`, or `.jpg`/`.jpeg` mapshot file
 - `/updatefiles` — update which required files are provided by the server
 - `/reloadmaps` — sync the map database with the file system
 - `/reloadrequirements [map]` — reload the requirements table (optionally for one map)
@@ -133,5 +133,6 @@ uvicorn api:app --host 127.0.0.1 --port 8080
 ## Upload format
 
 The `/upload_map` command accepts:
-- **`.bsp`** — placed directly under `{upload_path}/maps/[subfolder]/`
-- **`.zip`** — extracted to `upload_path`; must contain a `maps/` directory at the archive root with at least one `.bsp` file inside. The zip must not contain absolute paths or `..` components.
+- **`.bsp`** — placed under `{upload_path}/maps/[subfolder]/`; filenames ending in `_betaN` or `_bN` are automatically stored under `maps/beta/`
+- **`.zip`** — extracted to `upload_path`; must contain a `maps/` directory at the archive root with at least one `.bsp` file inside. BSP filenames ending in `_betaN` or `_bN` are automatically stored under `maps/beta/`. The zip must not contain absolute paths or `..` components.
+- **`.jpg` / `.jpeg`** — stored as a mapshot in `{mapshot_path}` if a matching BSP already exists. The BSP is matched by the image filename stem or by the optional `map_name` argument when provided.
