@@ -18,6 +18,15 @@ def _normalize_map_rel(map_rel: str) -> str:
     return "/".join(parts)
 
 
+def _safe_join_under_root(root: str, map_rel: str, suffix: str) -> str:
+    root_real = os.path.realpath(root)
+    candidate = os.path.normpath(os.path.join(root, map_rel + suffix))
+    candidate_real = os.path.realpath(candidate)
+    if candidate_real != root_real and not candidate_real.startswith(root_real + os.sep):
+        raise ValueError(f"Invalid map path: {map_rel}")
+    return candidate
+
+
 def resolve_map_rel(map_ref: str, session: Session | None = None) -> str:
     """
     Resolve a map reference to the canonical path stored under maps/.
@@ -27,7 +36,7 @@ def resolve_map_rel(map_ref: str, session: Session | None = None) -> str:
     if not normalized:
         return normalized
 
-    if os.path.isfile(os.path.join(map_path, normalized + ".bsp")):
+    if os.path.isfile(_safe_join_under_root(map_path, normalized, ".bsp")):
         return normalized
 
     if session is not None:
@@ -128,11 +137,11 @@ def generate_topshot(map_rel: str) -> None:
     Generate a top-down radar image for the given map and save it to topshot_path.
     """
     normalized_map_rel = _normalize_map_rel(map_rel)
-    bsp_path = os.path.join(map_path, normalized_map_rel + ".bsp")
+    bsp_path = _safe_join_under_root(map_path, normalized_map_rel, ".bsp")
     if not os.path.isfile(bsp_path):
         raise FileNotFoundError(f"BSP file not found: {normalized_map_rel}")
 
-    out_path = os.path.join(topshot_path, normalized_map_rel + ".jpg")
+    out_path = _safe_join_under_root(topshot_path, normalized_map_rel, ".jpg")
     out_dir = os.path.dirname(out_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
