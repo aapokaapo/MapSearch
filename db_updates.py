@@ -319,20 +319,17 @@ def _render_topshot_image(
     polygons: list,
     average_colors: list,
     max_resolution: int = 2048,
-    fov: int = 50,
 ) -> "Image.Image":
     """
     Render a top-down radar image from rotated polygons using a painter's algorithm.
 
     Axes after the "top" rotation: x-axis → image x, y-axis → image y, z-axis → depth.
-    Perspective projection is applied with the given field-of-view.
+    Orthographic projection is used so the image shows the map without perspective distortion.
     Returns a PIL RGBA Image.
     """
     import copy
-    import math
     from statistics import mean
 
-    import numpy as np
     from PIL import Image, ImageDraw
 
     # Depth axis is z (index 0 after the top-view rotation maps original axes).
@@ -345,38 +342,15 @@ def _render_topshot_image(
 
     polys = sorted(copy.deepcopy(polygons), key=_mean_depth, reverse=True)
 
-    # Max extents before projection.
+    # Orthographic projection: use IX and IY directly (no depth division).
     all_verts = [v for p in polys for v in p["vertices"]]
-    max_ix = max(v[IX] for v in all_verts)
-    max_iy = max(v[IY] for v in all_verts)
-
-    # Perspective: shift all vertices along the depth axis so every point is
-    # within the chosen field-of-view cone, then divide x/y by depth.
-    shifts = [
-        max(v[IX] / math.tan(math.radians(fov)) - v[DEPTH],
-            v[IY] / math.tan(math.radians(fov)) - v[DEPTH])
-        for v in all_verts
-    ]
-    z_shift = max(max(shifts), 0)
-
-    for p in polys:
-        for v in p["vertices"]:
-            v[DEPTH] += z_shift
-            if v[DEPTH] >= 1:
-                v[IX] = (v[IX] - max_ix / 2) / v[DEPTH] * max(max_ix, max_iy) + max_ix / 2
-                v[IY] = (v[IY] - max_iy / 2) / v[DEPTH] * max(max_ix, max_iy) + max_iy / 2
-            else:
-                v[IX] = None
-                v[IY] = None
-
-    proj_verts = [v for p in polys for v in p["vertices"] if v[IX] is not None]
-    if not proj_verts:
+    if not all_verts:
         return Image.new("RGBA", (max_resolution, max_resolution), (255, 255, 255, 100))
 
-    pmin_x = round(min(v[IX] for v in proj_verts))
-    pmin_y = round(min(v[IY] for v in proj_verts))
-    pmax_x = round(max(v[IX] for v in proj_verts))
-    pmax_y = round(max(v[IY] for v in proj_verts))
+    pmin_x = round(min(v[IX] for v in all_verts))
+    pmin_y = round(min(v[IY] for v in all_verts))
+    pmax_x = round(max(v[IX] for v in all_verts))
+    pmax_y = round(max(v[IY] for v in all_verts))
 
     span_x = max(pmax_x - pmin_x, pmax_y - pmin_y)
     span_y = span_x  # keep square denominator for coordinate mapping
@@ -386,32 +360,15 @@ def _render_topshot_image(
     img = Image.new("RGBA", (max(w, 1), max(h, 1)), (255, 255, 255, 100))
     draw = ImageDraw.Draw(img, "RGBA")
 
-    view_vec = [0.0, 0.0, 0.0]
-    view_vec[DEPTH] = 1.0
-
     for p in polys:
-        if any(v[IX] is None or v[IY] is None for v in p["vertices"]):
-            continue
-
         color = average_colors[p["tex_id"]]
         if len(color) == 4 and color[3] == 0:
             continue  # transparent / skip surface
 
-        # Back-face culling: skip faces whose normal points away from the camera.
-        center = [
-            mean(v[0] for v in p["vertices"]),
-            mean(v[1] for v in p["vertices"]) - max_ix / 2,
-            mean(v[2] for v in p["vertices"]) - max_iy / 2,
-        ]
+        # Back-face culling for orthographic: the view direction is purely along
+        # the depth axis.  Skip faces whose normal points away from the camera.
         normal = p["normal"]
-        norm_len = np.linalg.norm(normal)
-        center_len = np.linalg.norm(center)
-        if norm_len == 0 or center_len == 0:
-            continue
-        angle = math.degrees(np.arccos(
-            np.clip(np.dot(center, normal) / (center_len * norm_len), -1.0, 1.0)
-        ))
-        if angle < 90:
+        if normal[DEPTH] < 0:
             continue
 
         # Map projected coords to pixel space (flipped to correct orientation).
