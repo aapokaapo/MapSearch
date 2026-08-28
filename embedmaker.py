@@ -86,19 +86,30 @@ async def make_embed(keyword, maps=None, message=None, tags=None):
                 inline=False,
             )
             import os
-            mapshot_file = os.path.join(mapshot_path, keyword + ".jpg")
-            topshot_file = os.path.join(topshot_path, keyword + ".jpg")
-            if os.path.isfile(mapshot_file):
-                embed.set_image(url=public_mapshot_path + keyword + ".jpg")
-                if not os.path.isfile(topshot_file):
-                    from db_updates import request_topshot_via_api
-                    request_topshot_via_api(keyword)
-                if os.path.isfile(topshot_file):
-                    embed.set_thumbnail(url=public_topshot_path + keyword + ".jpg")
+            from db_updates import iter_image_map_rels, request_topshot_via_api
+
+            image_map_rels = iter_image_map_rels(keyword)
+
+            def _first_existing_image(directory):
+               for image_map_rel in image_map_rels:
+                   image_file = os.path.join(directory, image_map_rel + ".jpg")
+                   if os.path.isfile(image_file):
+                       return image_map_rel
+               return None
+
+            mapshot_rel = _first_existing_image(mapshot_path)
+            topshot_rel = _first_existing_image(topshot_path)
+            if mapshot_rel:
+               embed.set_image(url=public_mapshot_path + mapshot_rel + ".jpg")
+               if not topshot_rel:
+                   request_topshot_via_api(keyword)
+                   topshot_rel = _first_existing_image(topshot_path)
+               if topshot_rel:
+                   embed.set_thumbnail(url=public_topshot_path + topshot_rel + ".jpg")
             else:
-                if not os.path.isfile(topshot_file):
-                    from db_updates import request_topshot_via_api
-                    request_topshot_via_api(keyword)
-                if os.path.isfile(topshot_file):
-                    embed.set_image(url=public_topshot_path + keyword + ".jpg")
+               if not topshot_rel:
+                   request_topshot_via_api(keyword)
+                   topshot_rel = _first_existing_image(topshot_path)
+               if topshot_rel:
+                   embed.set_image(url=public_topshot_path + topshot_rel + ".jpg")
         return embed

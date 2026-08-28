@@ -543,6 +543,7 @@ def get_map_image(map_path: str, session: Session = Depends(get_session)):
     import urllib.parse
     from fastapi.responses import RedirectResponse
     from config import mapshot_path, topshot_path, map_path as maps_dir
+    from db_updates import generate_topshot, iter_image_map_rels
 
     # Resolve to a trusted DB record so that path used for file I/O and
     # redirects comes from our database, not directly from user input.
@@ -553,21 +554,32 @@ def get_map_image(map_path: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Map not found")
 
     trusted_path = db_map.map_path
-    safe_url_path = urllib.parse.quote(trusted_path, safe="/")
 
-    mapshot = os.path.join(mapshot_path, trusted_path + ".jpg")
-    if os.path.isfile(mapshot):
+    def _first_existing_image(directory: str) -> str | None:
+        for image_map_rel in iter_image_map_rels(trusted_path):
+            image_path = os.path.join(directory, image_map_rel + ".jpg")
+            if os.path.isfile(image_path):
+                return image_map_rel
+        return None
+
+    mapshot_rel = _first_existing_image(mapshot_path)
+    if mapshot_rel:
+        safe_url_path = urllib.parse.quote(mapshot_rel, safe="/")
         return RedirectResponse(url=f"/mapshots/{safe_url_path}.jpg", status_code=302)
 
-    topshot = os.path.join(topshot_path, trusted_path + ".jpg")
-    if not os.path.isfile(topshot):
+    topshot_rel = _first_existing_image(topshot_path)
+    if not topshot_rel:
         # Try to generate the topshot on-demand from the BSP.
         bsp = os.path.join(maps_dir, trusted_path + ".bsp")
         if os.path.isfile(bsp):
-            from db_updates import generate_topshot
-            generate_topshot(trusted_path)
+            try:
+                generate_topshot(trusted_path)
+            except Exception:
+                pass
+            topshot_rel = _first_existing_image(topshot_path)
 
-    if os.path.isfile(topshot):
+    if topshot_rel:
+        safe_url_path = urllib.parse.quote(topshot_rel, safe="/")
         return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
 
     raise HTTPException(status_code=404, detail="No image available for this map")
@@ -591,16 +603,17 @@ def get_map(map_path: str, session: Session = Depends(get_session)):
 @app.post("/api/export-bsp")
 def export_bsp(map_name: str, session: Session = Depends(get_session)):
     """Generate a topshot radar image for the given map."""
-    from db_updates import generate_topshot
+    from db_updates import generate_topshot, resolve_map_rel
     from config import map_path
 
-    bsp_path = os.path.join(map_path, map_name + ".bsp")
+    resolved_map_name = resolve_map_rel(map_name, session)
+    bsp_path = os.path.join(map_path, resolved_map_name + ".bsp")
     if not os.path.isfile(bsp_path):
-        raise HTTPException(status_code=404, detail=f"BSP file not found: {map_name}")
+        raise HTTPException(status_code=404, detail=f"BSP file not found: {resolved_map_name}")
 
     try:
-        generate_topshot(map_name)
-        return {"success": True, "message": f"Topshot generated for {map_name}"}
+        generate_topshot(resolved_map_name)
+        return {"success": True, "message": f"Topshot generated for {resolved_map_name}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"BSP processing failed: {str(e)}")
 
