@@ -359,12 +359,13 @@ def _render_topshot_image(
     AMBIENT = 0.35
     DIFFUSE = 0.65
 
-    # Sort back-to-front by the nearest vertex depth so faces that extend toward
-    # the camera are painted later, reducing overlap artifacts.
-    def _nearest_depth(p):
-        return max(v[DEPTH] for v in p["vertices"])
+    # Sort back-to-front (painter's algorithm): use each polygon's centroid
+    # depth so faces farther from the camera are drawn first.
+    def _centroid_depth(p):
+        verts = p["vertices"]
+        return sum(v[DEPTH] for v in verts) / len(verts)
 
-    polys = sorted(copy.deepcopy(polygons), key=_nearest_depth)
+    polys = sorted(copy.deepcopy(polygons), key=_centroid_depth)
 
     # Orthographic projection: use IX and IY directly (no depth division).
     all_verts = [v for p in polys for v in p["vertices"]]
