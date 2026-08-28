@@ -321,43 +321,58 @@ def _render_topshot_image(
     max_resolution: int = 2048,
 ) -> "Image.Image":
     """
-    Render a top-down radar image from rotated polygons using a painter's algorithm.
+    Render an isometric radar image from rotated polygons using a painter's algorithm.
 
-    Axes after the "top" rotation: x-axis → image x, y-axis → image y, z-axis → depth.
-    Orthographic projection is used so the image shows the map without perspective distortion.
-    Returns a PIL RGBA Image.
+    Orthographic projection is used so the image shows the map without perspective
+    distortion.  Diffuse lighting is applied based on each face's normal relative to
+    a fixed directional light to give a 3D appearance.
+    Returns a PIL RGBA Image with a black background.
     """
     import copy
+    import math
     from statistics import mean
 
     from PIL import Image, ImageDraw
 
-    # Depth axis is z (index 0 after the top-view rotation maps original axes).
-    # Image x = vertex[1], image y = vertex[2], depth = vertex[0].
-    IX, IY, DEPTH = 1, 2, 0
+    # After the isometric rotation the view direction is along the Z axis (index 2).
+    # Image x = vertex[0], image y = vertex[1], depth = vertex[2].
+    IX, IY, DEPTH = 0, 1, 2
+
+    # View direction (unit vector pointing from scene toward camera).
+    VIEW_DIR = (0.0, 0.0, 1.0)
+
+    # Directional light direction (unit vector pointing *toward* the light source),
+    # chosen to match the upper-left lighting visible in the target image.
+    _inv_sqrt3 = 1.0 / math.sqrt(3.0)
+    LIGHT_DIR = (-_inv_sqrt3, -_inv_sqrt3, _inv_sqrt3)
+
+    # Ambient and diffuse light intensities.
+    AMBIENT = 0.35
+    DIFFUSE = 0.65
 
     # Sort back-to-front by mean depth (painter's algorithm).
     def _mean_depth(p):
         return mean(v[DEPTH] for v in p["vertices"])
 
-    polys = sorted(copy.deepcopy(polygons), key=_mean_depth, reverse=True)
+    polys = sorted(copy.deepcopy(polygons), key=_mean_depth)
 
     # Orthographic projection: use IX and IY directly (no depth division).
     all_verts = [v for p in polys for v in p["vertices"]]
     if not all_verts:
-        return Image.new("RGBA", (max_resolution, max_resolution), (255, 255, 255, 100))
+        return Image.new("RGBA", (max_resolution, max_resolution), (0, 0, 0, 255))
 
-    pmin_x = round(min(v[IX] for v in all_verts))
-    pmin_y = round(min(v[IY] for v in all_verts))
-    pmax_x = round(max(v[IX] for v in all_verts))
-    pmax_y = round(max(v[IY] for v in all_verts))
+    pmin_x = min(v[IX] for v in all_verts)
+    pmin_y = min(v[IY] for v in all_verts)
+    pmax_x = max(v[IX] for v in all_verts)
+    pmax_y = max(v[IY] for v in all_verts)
 
     span_x = max(pmax_x - pmin_x, pmax_y - pmin_y)
-    span_y = span_x  # keep square denominator for coordinate mapping
+    if span_x == 0:
+        span_x = 1.0
 
     w = int((pmax_x - pmin_x) / span_x * max_resolution)
-    h = int((pmax_y - pmin_y) / span_y * max_resolution)
-    img = Image.new("RGBA", (max(w, 1), max(h, 1)), (255, 255, 255, 100))
+    h = int((pmax_y - pmin_y) / span_x * max_resolution)
+    img = Image.new("RGBA", (max(w, 1), max(h, 1)), (0, 0, 0, 255))
     draw = ImageDraw.Draw(img, "RGBA")
 
     for p in polys:
@@ -365,21 +380,28 @@ def _render_topshot_image(
         if len(color) == 4 and color[3] == 0:
             continue  # transparent / skip surface
 
-        # Back-face culling for orthographic: the view direction is purely along
-        # the depth axis.  Skip faces whose normal points away from the camera.
+        # Back-face culling: skip faces whose normal points away from the camera.
         normal = p["normal"]
-        if normal[DEPTH] < 0:
+        dot_view = sum(normal[i] * VIEW_DIR[i] for i in range(3))
+        if dot_view < 0:
             continue
 
-        # Map projected coords to pixel space (flipped to correct orientation).
+        # Diffuse lighting: dot product of face normal with light direction.
+        dot_light = max(0.0, sum(normal[i] * LIGHT_DIR[i] for i in range(3)))
+        brightness = AMBIENT + DIFFUSE * dot_light
+
+        base = color[:3]
+        lit_color = tuple(min(255, int(c * brightness)) for c in base)
+
+        # Map projected coords to pixel space.
         pixel_poly = [
             (
-                (pmax_x - v[IX]) / span_x * max_resolution,
-                (pmax_y - v[IY]) / span_y * max_resolution,
+                (v[IX] - pmin_x) / span_x * max_resolution,
+                (pmax_y - v[IY]) / span_x * max_resolution,
             )
             for v in p["vertices"]
         ]
-        draw.polygon(pixel_poly, fill=color[:3], outline=(0, 0, 0))
+        draw.polygon(pixel_poly, fill=lit_color)
 
     return img
 
@@ -399,8 +421,8 @@ def generate_topshot(map_rel: str) -> None:
         os.makedirs(out_dir, exist_ok=True)
 
     polygons, average_colors = _get_topshot_polygons(bsp_path, pball_path)
-    # "top" view: rotate x=0, y=-90, z=-90 (matches radar_image.py view_rotations["top"])
-    rotated = _rotate_topshot_polygons(polygons, x_deg=0, y_deg=-90, z_deg=-90)
+    # Isometric view: yaw 45°, then pitch -45° for a top-down angled perspective.
+    rotated = _rotate_topshot_polygons(polygons, x_deg=45, y_deg=0, z_deg=45)
     img = _render_topshot_image(rotated, average_colors)
     img.convert("RGB").save(out_path, "JPEG")
 
