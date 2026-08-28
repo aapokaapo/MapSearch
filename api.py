@@ -569,19 +569,32 @@ def get_map_image(map_path: str, session: Session = Depends(get_session)):
         return RedirectResponse(url=f"/mapshots/{safe_url_path}.jpg", status_code=302)
 
     topshot_rel = _first_existing_image(topshot_path)
+    generation_errors: list[str] = []
     if not topshot_rel:
         # Try to generate the topshot on-demand from the BSP.
-        bsp = os.path.join(maps_dir, trusted_path + ".bsp")
-        if os.path.isfile(bsp):
+        for candidate_map_rel in iter_image_map_rels(trusted_path):
+            bsp = os.path.join(maps_dir, candidate_map_rel + ".bsp")
+            if not os.path.isfile(bsp):
+                continue
             try:
-                generate_topshot(trusted_path)
-            except Exception:
-                pass
+                generate_topshot(candidate_map_rel)
+            except Exception as e:
+                generation_errors.append(f"{candidate_map_rel}: {e}")
+                continue
+
             topshot_rel = _first_existing_image(topshot_path)
+            if topshot_rel:
+                break
 
     if topshot_rel:
         safe_url_path = urllib.parse.quote(topshot_rel, safe="/")
         return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
+
+    if generation_errors:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate image: " + " | ".join(generation_errors),
+        )
 
     raise HTTPException(status_code=404, detail="No image available for this map")
 
