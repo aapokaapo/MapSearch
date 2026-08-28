@@ -36,9 +36,6 @@ def resolve_map_rel(map_ref: str, session: Session | None = None) -> str:
     if not normalized:
         return normalized
 
-    if os.path.isfile(_safe_join_under_root(map_path, normalized, ".bsp")):
-        return normalized
-
     if session is not None:
         result = session.exec(
             select(Map).where((Map.map_path == normalized) | (Map.map_name == normalized))
@@ -155,8 +152,6 @@ def generate_topshot(map_rel: str) -> None:
         mode=0,
         image_path=out_path,
     )
-    if not os.path.isfile(out_path):
-        raise RuntimeError(f"Topshot was not created for {normalized_map_rel}")
 
 
 def request_topshot_via_api(map_rel: str) -> None:
