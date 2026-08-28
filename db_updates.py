@@ -129,6 +129,307 @@ def remove_tag(map_name: str, tag: str, session: Session) -> str:
     return f"✅ Tag `{tag}` removed from `{map_name}`."
 
 
+def _get_topshot_polygons(bsp_path: str, pball_path: str):
+    """
+    Parse a Q2BSP file and return (polygons, average_colors) for top-shot rendering.
+
+    Each polygon is a dict with keys 'vertices' (list of [x,y,z] floats),
+    'tex_id' (index into average_colors), and 'normal' ([nx,ny,nz] floats).
+    average_colors is a list of (R,G,B) or (R,G,B,A) tuples; (0,0,0,0) means
+    the face should be skipped (clip/skip/hint/trigger/origin surfaces).
+    """
+    import math
+    from PIL import Image, WalImageFile
+    from Q2BSP import Q2BSP
+
+    bsp = Q2BSP(bsp_path)
+
+    # Build deduplicated texture list (preserving first-seen order).
+    texture_list = [ti.get_texture_name() for ti in bsp.tex_infos]
+    unique_textures = list(dict.fromkeys(texture_list))
+
+    _SKIP_KEYWORDS = ("origin", "clip", "skip", "hint", "trigger")
+    _SUPPORTED_EXTS = {".png", ".jpg", ".tga", ".wal"}
+
+    _pal_cache: list[list] = []  # lazy-loaded WAL palette (stored as single-element list)
+
+    def _get_wal_palette() -> list:
+        if not _pal_cache:
+            pal_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking", "pb2e.pal")
+            with open(pal_path) as fh:
+                lines = fh.read().split("\n")[3:]
+            entries = [c for line in lines for c in line.split() if c]
+            _pal_cache.append(list(map(int, entries)))
+        return _pal_cache[0]
+
+    average_colors: list = []
+    for texture in unique_textures:
+        # Surfaces whose names contain control keywords are always transparent.
+        if any(kw in texture.lower() for kw in _SKIP_KEYWORDS):
+            average_colors.append((0, 0, 0, 0))
+            continue
+
+        tex_dir = "/".join(texture.lower().split("/")[:-1])
+        tex_name = texture.split("/")[-1].lower()
+        abs_tex_dir = os.path.join(pball_path, "textures", tex_dir)
+
+        if not os.path.isdir(abs_tex_dir):
+            average_colors.append((0, 0, 0))
+            continue
+
+        # Find the texture file (any supported extension).
+        matched_path = ""
+        for entry in os.listdir(abs_tex_dir):
+            stem, ext = os.path.splitext(entry)
+            if stem.lower() == tex_name and ext.lower() in _SUPPORTED_EXTS:
+                matched_path = os.path.join(tex_dir, entry)
+                break
+
+        if not matched_path:
+            average_colors.append((0, 0, 0))
+            continue
+
+        abs_path = os.path.join(pball_path, "textures", matched_path)
+        ext = os.path.splitext(matched_path)[1].lower()
+        try:
+            if ext == ".wal":
+                nonlocal pal_bytes  # type: ignore[misc]
+                if pal_bytes is None:
+                    pal_bytes = _load_wal_palette()
+                img = WalImageFile.open(abs_path)
+                img.putpalette(_get_wal_palette())
+                img = img.convert("RGBA")
+            else:
+                img = Image.open(abs_path).convert("RGBA")
+            color = img.resize((1, 1)).getpixel((0, 0))[:3]
+        except Exception:
+            color = (0, 0, 0)
+        average_colors.append(color)
+
+    # Map each face's tex_info index to its index in unique_textures.
+    tex_id_for_face = [
+        unique_textures.index(texture_list[face.texture_info])
+        for face in bsp.faces
+    ]
+
+    _SKIP_FLAGS = ("hint", "nodraw", "sky", "skip")
+
+    # Collect vertices for every face via the edge list.
+    raw_faces: list[list] = []
+    skip_face_indices: list[int] = []
+    for fidx, face in enumerate(bsp.faces):
+        flags = bsp.tex_infos[face.texture_info].flags
+        if any(getattr(flags, f, False) for f in _SKIP_FLAGS):
+            skip_face_indices.append(fidx)
+        verts: list = []
+        for i in range(face.num_edges):
+            fe = bsp.face_edges[face.first_edge + i]
+            edge = bsp.edge_list[fe] if fe > 0 else bsp.edge_list[abs(fe)][::-1]
+            for vi in edge:
+                v = bsp.vertices[vi]
+                if v not in verts:
+                    verts.append(v)
+        raw_faces.append(verts)
+
+    # Shift all vertices so minimum x, y, z == 0.
+    all_verts = [v for face in raw_faces for v in face]
+    min_x = min(v[0] for v in all_verts)
+    min_y = min(v[1] for v in all_verts)
+    min_z = min(v[2] for v in all_verts)
+    norm_faces = [
+        [[v[0] - min_x, v[1] - min_y, v[2] - min_z] for v in face]
+        for face in raw_faces
+    ]
+
+    # Build normals; flip if plane_side != 0.
+    plane_normals = [list(p.normal) for p in bsp.planes]
+    normals: list[list[float]] = []
+    for face in bsp.faces:
+        n = plane_normals[face.plane]
+        if face.plane_side != 0:
+            n = [-x if x != 0.0 else x for x in n]
+        normals.append(n)
+
+    # Assemble polygon list, dropping skip surfaces (in reverse order).
+    polygons = [
+        {"vertices": norm_faces[i], "tex_id": tex_id_for_face[i], "normal": normals[i]}
+        for i in range(len(bsp.faces))
+    ]
+    for i in sorted(skip_face_indices, reverse=True):
+        polygons.pop(i)
+
+    return polygons, average_colors
+
+
+def _rotate_topshot_polygons(polygons: list, x_deg: float, y_deg: float, z_deg: float) -> list:
+    """
+    Apply Z → Y → X rotation matrices to polygon vertices and normals,
+    then re-normalise so all coordinates remain ≥ 0.
+    """
+    import copy
+    import math
+
+    polys = copy.deepcopy(polygons)
+
+    def _rot_z(vx, vy, angle):
+        c, s = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+        return c * vx - s * vy, s * vx + c * vy
+
+    def _rot_y(vx, vz, angle):
+        c, s = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+        return c * vx + s * vz, -s * vx + c * vz
+
+    def _rot_x(vy, vz, angle):
+        c, s = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+        return c * vy - s * vz, s * vy + c * vz
+
+    if z_deg != 0:
+        for p in polys:
+            for v in p["vertices"]:
+                v[0], v[1] = _rot_z(v[0], v[1], z_deg)
+            n = p["normal"]
+            n[0], n[1] = _rot_z(n[0], n[1], z_deg)
+
+    if y_deg != 0:
+        for p in polys:
+            for v in p["vertices"]:
+                v[0], v[2] = _rot_y(v[0], v[2], y_deg)
+            n = p["normal"]
+            n[0], n[2] = _rot_y(n[0], n[2], y_deg)
+
+    if x_deg != 0:
+        for p in polys:
+            for v in p["vertices"]:
+                v[1], v[2] = _rot_x(v[1], v[2], x_deg)
+            n = p["normal"]
+            n[1], n[2] = _rot_x(n[1], n[2], x_deg)
+
+    # Re-normalise so all coords ≥ 0.
+    all_verts = [v for p in polys for v in p["vertices"]]
+    min_x = min(v[0] for v in all_verts)
+    min_y = min(v[1] for v in all_verts)
+    min_z = min(v[2] for v in all_verts)
+    for p in polys:
+        for v in p["vertices"]:
+            v[0] -= min_x
+            v[1] -= min_y
+            v[2] -= min_z
+
+    return polys
+
+
+def _render_topshot_image(
+    polygons: list,
+    average_colors: list,
+    max_resolution: int = 2048,
+    fov: int = 50,
+) -> "Image.Image":
+    """
+    Render a top-down radar image from rotated polygons using a painter's algorithm.
+
+    Axes after the "top" rotation: x-axis → image x, y-axis → image y, z-axis → depth.
+    Perspective projection is applied with the given field-of-view.
+    Returns a PIL RGBA Image.
+    """
+    import copy
+    import math
+    from statistics import mean
+
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    # Depth axis is z (index 0 after the top-view rotation maps original axes).
+    # Image x = vertex[1], image y = vertex[2], depth = vertex[0].
+    IX, IY, DEPTH = 1, 2, 0
+
+    # Sort back-to-front by mean depth (painter's algorithm).
+    def _mean_depth(p):
+        return mean(v[DEPTH] for v in p["vertices"])
+
+    polys = sorted(copy.deepcopy(polygons), key=_mean_depth, reverse=True)
+
+    # Max extents before projection.
+    all_verts = [v for p in polys for v in p["vertices"]]
+    max_ix = max(v[IX] for v in all_verts)
+    max_iy = max(v[IY] for v in all_verts)
+
+    # Perspective: shift all vertices along the depth axis so every point is
+    # within the chosen field-of-view cone, then divide x/y by depth.
+    shifts = [
+        max(v[IX] / math.tan(math.radians(fov)) - v[DEPTH],
+            v[IY] / math.tan(math.radians(fov)) - v[DEPTH])
+        for v in all_verts
+    ]
+    z_shift = max(max(shifts), 0)
+
+    for p in polys:
+        for v in p["vertices"]:
+            v[DEPTH] += z_shift
+            if v[DEPTH] >= 1:
+                v[IX] = (v[IX] - max_ix / 2) / v[DEPTH] * max(max_ix, max_iy) + max_ix / 2
+                v[IY] = (v[IY] - max_iy / 2) / v[DEPTH] * max(max_ix, max_iy) + max_iy / 2
+            else:
+                v[IX] = None
+                v[IY] = None
+
+    proj_verts = [v for p in polys for v in p["vertices"] if v[IX] is not None]
+    if not proj_verts:
+        return Image.new("RGBA", (max_resolution, max_resolution), (255, 255, 255, 100))
+
+    pmin_x = round(min(v[IX] for v in proj_verts))
+    pmin_y = round(min(v[IY] for v in proj_verts))
+    pmax_x = round(max(v[IX] for v in proj_verts))
+    pmax_y = round(max(v[IY] for v in proj_verts))
+
+    span_x = max(pmax_x - pmin_x, pmax_y - pmin_y)
+    span_y = span_x  # keep square denominator for coordinate mapping
+
+    w = int((pmax_x - pmin_x) / span_x * max_resolution)
+    h = int((pmax_y - pmin_y) / span_y * max_resolution)
+    img = Image.new("RGBA", (max(w, 1), max(h, 1)), (255, 255, 255, 100))
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    view_vec = [0.0, 0.0, 0.0]
+    view_vec[DEPTH] = 1.0
+
+    for p in polys:
+        if any(v[IX] is None or v[IY] is None for v in p["vertices"]):
+            continue
+
+        color = average_colors[p["tex_id"]]
+        if len(color) == 4 and color[3] == 0:
+            continue  # transparent / skip surface
+
+        # Back-face culling: skip faces whose normal points away from the camera.
+        center = [
+            mean(v[0] for v in p["vertices"]),
+            mean(v[1] for v in p["vertices"]) - max_ix / 2,
+            mean(v[2] for v in p["vertices"]) - max_iy / 2,
+        ]
+        normal = p["normal"]
+        norm_len = np.linalg.norm(normal)
+        center_len = np.linalg.norm(center)
+        if norm_len == 0 or center_len == 0:
+            continue
+        angle = math.degrees(np.arccos(
+            np.clip(np.dot(center, normal) / (center_len * norm_len), -1.0, 1.0)
+        ))
+        if angle < 90:
+            continue
+
+        # Map projected coords to pixel space (flipped to correct orientation).
+        pixel_poly = [
+            (
+                (pmax_x - v[IX]) / span_x * max_resolution,
+                (pmax_y - v[IY]) / span_y * max_resolution,
+            )
+            for v in p["vertices"]
+        ]
+        draw.polygon(pixel_poly, fill=color[:3], outline=(0, 0, 0))
+
+    return img
+
+
 def generate_topshot(map_rel: str) -> None:
     """
     Generate a top-down radar image for the given map and save it to topshot_path.
@@ -143,19 +444,11 @@ def generate_topshot(map_rel: str) -> None:
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    import radar_image
-    import colored_radar_image
-    from PIL import Image as _PIL_Image, ImageDraw as _PIL_ImageDraw
-    colored_radar_image.Image = _PIL_Image
-    colored_radar_image.ImageDraw = _PIL_ImageDraw
-
-    radar_image.create_image(
-        path_to_pball=pball_path,
-        map_path=bsp_path,
-        image_type="top",
-        mode=0,
-        image_path=out_path,
-    )
+    polygons, average_colors = _get_topshot_polygons(bsp_path, pball_path)
+    # "top" view: rotate x=0, y=-90, z=-90 (matches radar_image.py view_rotations["top"])
+    rotated = _rotate_topshot_polygons(polygons, x_deg=0, y_deg=-90, z_deg=-90)
+    img = _render_topshot_image(rotated, average_colors)
+    img.convert("RGB").save(out_path, "JPEG")
 
 
 def request_topshot_via_api(map_rel: str) -> None:
