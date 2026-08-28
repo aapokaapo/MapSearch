@@ -193,9 +193,6 @@ def _get_topshot_polygons(bsp_path: str, pball_path: str):
         ext = os.path.splitext(matched_path)[1].lower()
         try:
             if ext == ".wal":
-                nonlocal pal_bytes  # type: ignore[misc]
-                if pal_bytes is None:
-                    pal_bytes = _load_wal_palette()
                 img = WalImageFile.open(abs_path)
                 img.putpalette(_get_wal_palette())
                 img = img.convert("RGBA")
