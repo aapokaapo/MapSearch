@@ -144,6 +144,10 @@ def generate_topshot(map_rel: str) -> None:
         os.makedirs(out_dir, exist_ok=True)
 
     import radar_image
+    import colored_radar_image
+    from PIL import Image as _PIL_Image, ImageDraw as _PIL_ImageDraw
+    colored_radar_image.Image = _PIL_Image
+    colored_radar_image.ImageDraw = _PIL_ImageDraw
 
     radar_image.create_image(
         path_to_pball=pball_path,
