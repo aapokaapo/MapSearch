@@ -221,12 +221,23 @@ def _get_topshot_polygons(bsp_path: str, pball_path: str):
         verts: list = []
         for i in range(face.num_edges):
             fe = bsp.face_edges[face.first_edge + i]
-            edge = bsp.edge_list[fe] if fe > 0 else bsp.edge_list[abs(fe)][::-1]
-            for vi in edge:
-                v = bsp.vertices[vi]
-                if v not in verts:
-                    verts.append(v)
-        raw_faces.append(verts)
+            edge_idx = fe if fe >= 0 else -fe
+            if edge_idx < 0 or edge_idx >= len(bsp.edge_list):
+                continue
+            edge = bsp.edge_list[edge_idx]
+            vi = edge[0] if fe >= 0 else edge[1]
+            verts.append(bsp.vertices[vi])
+
+        # Drop duplicate closing vertex and consecutive duplicates.
+        while len(verts) > 1 and verts[-1] == verts[0]:
+            verts.pop()
+        deduped: list = []
+        for v in verts:
+            if not deduped or deduped[-1] != v:
+                deduped.append(v)
+        if len(deduped) < 3:
+            skip_face_indices.append(fidx)
+        raw_faces.append(deduped)
 
     # Shift all vertices so minimum x, y, z == 0.
     all_verts = [v for face in raw_faces for v in face]
@@ -330,8 +341,6 @@ def _render_topshot_image(
     """
     import copy
     import math
-    from statistics import mean
-
     from PIL import Image, ImageDraw
 
     # After the isometric rotation the view direction is along the Z axis (index 2).
@@ -350,11 +359,12 @@ def _render_topshot_image(
     AMBIENT = 0.35
     DIFFUSE = 0.65
 
-    # Sort back-to-front by mean depth (painter's algorithm).
-    def _mean_depth(p):
-        return mean(v[DEPTH] for v in p["vertices"])
+    # Sort back-to-front by the nearest vertex depth so faces that extend toward
+    # the camera are painted later, reducing overlap artifacts.
+    def _nearest_depth(p):
+        return max(v[DEPTH] for v in p["vertices"])
 
-    polys = sorted(copy.deepcopy(polygons), key=_mean_depth)
+    polys = sorted(copy.deepcopy(polygons), key=_nearest_depth)
 
     # Orthographic projection: use IX and IY directly (no depth division).
     all_verts = [v for p in polys for v in p["vertices"]]
