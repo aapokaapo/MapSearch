@@ -547,8 +547,9 @@ def get_map_image(map_path: str, session: Session = Depends(get_session)):
 
     # Resolve to a trusted DB record so that path used for file I/O and
     # redirects comes from our database, not directly from user input.
+    requested_map_ref = urllib.parse.unquote(map_path)
     db_map = session.exec(
-        select(Map).where((Map.map_path == map_path) | (Map.map_name == map_path))
+        select(Map).where((Map.map_path == requested_map_ref) | (Map.map_name == requested_map_ref))
     ).first()
     if not db_map:
         raise HTTPException(status_code=404, detail="Map not found")
