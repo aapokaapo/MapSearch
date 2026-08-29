@@ -417,6 +417,52 @@ def _render_topshot_image(
     return img
 
 
+def _compute_map_yaw_angle(polygons: list) -> float:
+    """
+    Find the two face centroids that are furthest apart in the horizontal (X-Y)
+    plane and return the yaw angle (in degrees) of the vector between them.
+
+    This is used to auto-orient the map so its longest horizontal axis runs
+    diagonally from bottom-left to top-right before the isometric pitch is
+    applied, matching the appearance in the reference image.
+    """
+    import math
+
+    # Compute each face's horizontal centroid (X and Y only).
+    centroids = []
+    for p in polygons:
+        verts = p["vertices"]
+        if not verts:
+            continue
+        cx = sum(v[0] for v in verts) / len(verts)
+        cy = sum(v[1] for v in verts) / len(verts)
+        centroids.append((cx, cy))
+
+    if len(centroids) < 2:
+        return 45.0
+
+    # Find the pair of centroids with the greatest horizontal distance.
+    max_dist_sq = -1.0
+    far_a = centroids[0]
+    far_b = centroids[-1]
+    for i in range(len(centroids)):
+        for j in range(i + 1, len(centroids)):
+            dx = centroids[j][0] - centroids[i][0]
+            dy = centroids[j][1] - centroids[i][1]
+            d2 = dx * dx + dy * dy
+            if d2 > max_dist_sq:
+                max_dist_sq = d2
+                far_a = centroids[i]
+                far_b = centroids[j]
+
+    dx = far_b[0] - far_a[0]
+    dy = far_b[1] - far_a[1]
+    # Angle of the longest axis, then subtract 45° so it aligns with the
+    # isometric diagonal (bottom-left to top-right).
+    angle_deg = math.degrees(math.atan2(dy, dx)) - 45.0
+    return angle_deg
+
+
 def generate_topshot(map_rel: str) -> None:
     """
     Generate a top-down radar image for the given map and save it to topshot_path.
@@ -432,8 +478,10 @@ def generate_topshot(map_rel: str) -> None:
         os.makedirs(out_dir, exist_ok=True)
 
     polygons, average_colors = _get_topshot_polygons(bsp_path, pball_path)
-    # Isometric view: yaw 45°, then pitch -45° for a top-down angled perspective.
-    rotated = _rotate_topshot_polygons(polygons, x_deg=45, y_deg=0, z_deg=45)
+    # Auto-orient: rotate the map in Z so its longest horizontal axis aligns
+    # with the isometric diagonal, then apply 45° pitch.
+    yaw_deg = _compute_map_yaw_angle(polygons)
+    rotated = _rotate_topshot_polygons(polygons, x_deg=45, y_deg=0, z_deg=yaw_deg)
     img = _render_topshot_image(rotated, average_colors)
     img.convert("RGB").save(out_path, "JPEG")
 
