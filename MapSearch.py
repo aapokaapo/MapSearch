@@ -463,7 +463,7 @@ async def regenerate_topshot(
     topshot_ok = [map_rel for map_rel, error in results if map_rel is not None]
     topshot_fail = [error for map_rel, error in results if error is not None]
 
-    lines = [f"🛰️ Topshot regeneration finished for {len(target_maps)} map(s)."]
+    lines = [f"🛰️ Topshot regeneration attempted for {len(target_maps)} map(s)."]
     if topshot_ok:
         success_preview = ", ".join(f"`{m}`" for m in topshot_ok[:10])
         if len(topshot_ok) > 10:
