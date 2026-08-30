@@ -535,3 +535,4 @@ def request_topshot_via_api(map_rel: str) -> None:
             pass
     except Exception as e:
         print(f"request_topshot_via_api: failed for {map_rel}: {e}")
+        raise

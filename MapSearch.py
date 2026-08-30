@@ -371,11 +371,22 @@ async def upload_map(
             add_map_to_db(map_rel, session)
         session.commit()
 
+    topshot_ok: list[str] = []
+    topshot_fail: list[str] = []
     for map_rel in saved_bsps:
-        request_topshot_via_api(map_rel)
+        try:
+            request_topshot_via_api(map_rel)
+            topshot_ok.append(map_rel)
+        except Exception as e:
+            topshot_fail.append(f"`{map_rel}` ({e})")
 
     if saved_bsps:
-        await ctx.channel.send(f"📦 Database updated and topshots generated for: {', '.join(f'`{m}`' for m in saved_bsps)}")
+        lines = [f"📦 Database updated for: {', '.join(f'`{m}`' for m in saved_bsps)}"]
+        if topshot_ok:
+            lines.append(f"✅ Topshots generated: {', '.join(f'`{m}`' for m in topshot_ok)}")
+        if topshot_fail:
+            lines.append(f"⚠️ Topshot generation failed: {'; '.join(topshot_fail)}")
+        await ctx.channel.send("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
