@@ -411,7 +411,7 @@ async def upload_map(
 )
 async def regenerate_topshot(
     ctx: discord.ApplicationContext,
-    map_name: str = "",
+    map_name: str | None = None,
     all_maps: bool = False,
 ):
     await ctx.defer()
@@ -460,8 +460,8 @@ async def regenerate_topshot(
                 return None, f"`{target_map}` ({e})"
 
     results = await asyncio.gather(*(_regenerate_one(target_map) for target_map in target_maps))
-    topshot_ok = [map_rel for map_rel, error in results if map_rel]
-    topshot_fail = [error for map_rel, error in results if error]
+    topshot_ok = [map_rel for map_rel, error in results if map_rel is not None]
+    topshot_fail = [error for map_rel, error in results if error is not None]
 
     lines = [f"🛰️ Topshot regeneration finished for {len(target_maps)} map(s)."]
     if topshot_ok:
