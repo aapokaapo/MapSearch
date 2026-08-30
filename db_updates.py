@@ -514,12 +514,14 @@ def generate_topshot(map_rel: str) -> None:
     img.convert("RGB").save(out_path, "JPEG")
 
 
-def _generate_topshot_worker(map_rel: str, result_queue: "mp.Queue") -> None:
+def _generate_topshot_worker(map_rel: str, result_conn: "mp.connection.Connection") -> None:
     try:
         generate_topshot(map_rel)
-        result_queue.put((True, None))
+        result_conn.send((True, None))
     except Exception as e:
-        result_queue.put((False, str(e)))
+        result_conn.send((False, str(e)))
+    finally:
+        result_conn.close()
 
 
 def generate_topshot_with_timeout(map_rel: str, timeout_seconds: float = 45) -> None:
@@ -528,28 +530,28 @@ def generate_topshot_with_timeout(map_rel: str, timeout_seconds: float = 45) -> 
         return
 
     ctx = mp.get_context("spawn")
-    result_queue = ctx.Queue(maxsize=1)
-    worker = ctx.Process(target=_generate_topshot_worker, args=(map_rel, result_queue), daemon=True)
+    parent_conn, child_conn = ctx.Pipe(duplex=False)
+    worker = ctx.Process(target=_generate_topshot_worker, args=(map_rel, child_conn))
     worker.start()
+    child_conn.close()
     worker.join(timeout_seconds)
 
     if worker.is_alive():
         worker.terminate()
         worker.join(5)
+        parent_conn.close()
         raise TimeoutError(f"Topshot generation timed out after {timeout_seconds} seconds for {map_rel}")
 
-    if worker.exitcode not in (0, None):
-        if not result_queue.empty():
-            ok, message = result_queue.get()
-            if not ok:
-                raise RuntimeError(message or f"Topshot generation failed for {map_rel}")
-        raise RuntimeError(f"Topshot generation process failed with exit code {worker.exitcode} for {map_rel}")
-
-    if not result_queue.empty():
-        ok, message = result_queue.get()
+    if parent_conn.poll():
+        ok, message = parent_conn.recv()
+        parent_conn.close()
         if not ok:
             raise RuntimeError(message or f"Topshot generation failed for {map_rel}")
         return
+
+    parent_conn.close()
+    if worker.exitcode not in (0, None):
+        raise RuntimeError(f"Topshot generation process failed with exit code {worker.exitcode} for {map_rel}")
 
     raise RuntimeError(f"Topshot generation process completed without a result for {map_rel}")
 
