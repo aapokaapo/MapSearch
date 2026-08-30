@@ -105,8 +105,8 @@ async def make_embed(keyword, maps=None, message=None, tags=None):
                    try:
                        request_topshot_via_api(keyword)
                        topshot_rel = _first_existing_image(topshot_path)
-                   except Exception:
-                       pass
+                   except Exception as e:
+                       print(f"embedmaker: topshot generation failed for {keyword}: {e}")
                if topshot_rel:
                    embed.set_thumbnail(url=public_topshot_path + topshot_rel + ".jpg")
             else:
@@ -114,8 +114,8 @@ async def make_embed(keyword, maps=None, message=None, tags=None):
                    try:
                        request_topshot_via_api(keyword)
                        topshot_rel = _first_existing_image(topshot_path)
-                   except Exception:
-                       pass
+                   except Exception as e:
+                       print(f"embedmaker: topshot generation failed for {keyword}: {e}")
                if topshot_rel:
                    embed.set_image(url=public_topshot_path + topshot_rel + ".jpg")
         return embed
