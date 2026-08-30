@@ -383,9 +383,14 @@ def _render_topshot_textured(bsp_path: str, pball_root: str, max_resolution: int
         nx = ay * bz2 - az * by2
         ny = az * bx2 - ax * bz2
         nz = ax * by2 - ay * bx2
-        # Camera faces +Z after the isometric rotation; cull back-facing polygons.
+        # Camera faces +Z after the isometric rotation.
+        # Opaque faces: cull back-facing polygons (FrontSide, like the 3D viewer).
+        # Transparent faces: render both sides (DoubleSide, like the 3D viewer),
+        # but flip the normal so diffuse lighting is correct for back-facing geometry.
         if nz < 0:
-            continue
+            if opacity >= 1.0:
+                continue
+            nx = -nx; ny = -ny; nz = -nz
         mag = math.sqrt(nx * nx + ny * ny + nz * nz)
         if mag > 0:
             nx /= mag; ny /= mag; nz /= mag
