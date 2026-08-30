@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import shutil
@@ -448,14 +449,19 @@ async def regenerate_topshot(
 
         target_maps = [target_map_rel]
 
-    topshot_ok: list[str] = []
-    topshot_fail: list[str] = []
-    for target_map in target_maps:
-        try:
-            request_topshot_via_api(target_map)
-            topshot_ok.append(target_map)
-        except Exception as e:
-            topshot_fail.append(f"`{target_map}` ({e})")
+    semaphore = asyncio.Semaphore(4)
+
+    async def _regenerate_one(target_map: str) -> tuple[str | None, str | None]:
+        async with semaphore:
+            try:
+                await asyncio.to_thread(request_topshot_via_api, target_map)
+                return target_map, None
+            except Exception as e:
+                return None, f"`{target_map}` ({e})"
+
+    results = await asyncio.gather(*(_regenerate_one(target_map) for target_map in target_maps))
+    topshot_ok = [map_rel for map_rel, error in results if map_rel]
+    topshot_fail = [error for map_rel, error in results if error]
 
     lines = [f"🛰️ Topshot regeneration finished for {len(target_maps)} map(s)."]
     if topshot_ok:
