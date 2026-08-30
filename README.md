@@ -36,6 +36,8 @@ The FastAPI backend (`api.py`) exposes a REST API and serves the web frontend.
 | `GET` | `/api/maps` | List all maps |
 | `GET` | `/api/maps/search?keyword=…` | Search maps by name, path, message, or tag |
 | `GET` | `/api/maps/{map_path}` | Get info for a specific map |
+| `GET` | `/api/maps/{map_path}/image` | Redirect to mapshot or topshot image (auto-generates topshot fallback) |
+| `GET` | `/api/maps/{map_path}/topshot` | Always return/create topshot image for a map |
 | `GET` | `/api/maps/{map_path}/files` | List required files for a map |
 | `GET` | `/api/maps/{map_path}/download` | Download a ZIP archive of the map |
 | `GET` | `/api/maps/{map_path}/bsp` | Stream the raw BSP file |

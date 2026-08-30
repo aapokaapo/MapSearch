@@ -599,6 +599,56 @@ def get_map_image(map_path: str, session: Session = Depends(get_session)):
     raise HTTPException(status_code=404, detail="No image available for this map")
 
 
+@app.get("/api/maps/{map_path:path}/topshot")
+def get_or_create_map_topshot(map_path: str, session: Session = Depends(get_session)):
+    import urllib.parse
+    from fastapi.responses import RedirectResponse
+    from config import topshot_path, map_path as maps_dir
+    from db_updates import generate_topshot, iter_image_map_rels
+
+    requested_map_ref = urllib.parse.unquote(map_path)
+    db_map = session.exec(
+        select(Map).where((Map.map_path == requested_map_ref) | (Map.map_name == requested_map_ref))
+    ).first()
+    if not db_map:
+        raise HTTPException(status_code=404, detail="Map not found")
+
+    trusted_path = db_map.map_path
+    topshot_rel = None
+    for candidate_map_rel in iter_image_map_rels(trusted_path):
+        candidate_topshot = os.path.join(topshot_path, candidate_map_rel + ".jpg")
+        if os.path.isfile(candidate_topshot):
+            topshot_rel = candidate_map_rel
+            break
+
+    generation_errors: list[str] = []
+    if not topshot_rel:
+        for candidate_map_rel in iter_image_map_rels(trusted_path):
+            bsp = os.path.join(maps_dir, candidate_map_rel + ".bsp")
+            if not os.path.isfile(bsp):
+                continue
+            try:
+                generate_topshot(candidate_map_rel)
+                candidate_topshot = os.path.join(topshot_path, candidate_map_rel + ".jpg")
+                if os.path.isfile(candidate_topshot):
+                    topshot_rel = candidate_map_rel
+                    break
+            except Exception as e:
+                generation_errors.append(f"{candidate_map_rel}: {e}")
+
+    if topshot_rel:
+        safe_url_path = urllib.parse.quote(topshot_rel, safe="/")
+        return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
+
+    if generation_errors:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate topshot: " + " | ".join(generation_errors),
+        )
+
+    raise HTTPException(status_code=404, detail="No topshot available for this map")
+
+
 @app.get("/api/maps/{map_path:path}", response_model=Map)
 def get_map(map_path: str, session: Session = Depends(get_session)):
     """Return info for a specific map by its path or name."""
