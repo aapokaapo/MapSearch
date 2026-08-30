@@ -1,7 +1,6 @@
 import codecs
 import os
 import sys
-import multiprocessing as mp
 
 from sqlmodel import Session, select
 
@@ -512,39 +511,6 @@ def generate_topshot(map_rel: str) -> None:
 
     img = _render_topshot_textured(bsp_path, pball_path)
     img.convert("RGB").save(out_path, "JPEG")
-
-
-def _generate_topshot_worker(map_rel: str) -> None:
-    generate_topshot(map_rel)
-
-
-def generate_topshot_with_timeout(map_rel: str, timeout_seconds: float = 45) -> None:
-    normalized_map_rel = _normalize_map_rel(map_rel)
-    if timeout_seconds <= 0:
-        generate_topshot(normalized_map_rel)
-        return
-
-    start_methods = mp.get_all_start_methods()
-    start_method = "forkserver" if "forkserver" in start_methods else "spawn"
-    ctx = mp.get_context(start_method)
-    worker = ctx.Process(target=_generate_topshot_worker, args=(normalized_map_rel,))
-    worker.start()
-    worker.join(timeout_seconds)
-
-    if worker.is_alive():
-        worker.terminate()
-        worker.join(5)
-        if worker.is_alive():
-            worker.kill()
-            worker.join(5)
-        raise TimeoutError(
-            f"Topshot generation timed out after {timeout_seconds} seconds for {normalized_map_rel}"
-        )
-
-    if worker.exitcode != 0:
-        raise RuntimeError(
-            f"Topshot generation process failed with exit code {worker.exitcode} for {normalized_map_rel}"
-        )
 
 
 def request_topshot_via_api(map_rel: str) -> None:
