@@ -538,13 +538,20 @@ def generate_topshot_with_timeout(map_rel: str, timeout_seconds: float = 45) -> 
         worker.join(5)
         raise TimeoutError(f"Topshot generation timed out after {timeout_seconds} seconds for {map_rel}")
 
+    if worker.exitcode not in (0, None):
+        if not result_queue.empty():
+            ok, message = result_queue.get()
+            if not ok:
+                raise RuntimeError(message or f"Topshot generation failed for {map_rel}")
+        raise RuntimeError(f"Topshot generation process failed with exit code {worker.exitcode} for {map_rel}")
+
     if not result_queue.empty():
         ok, message = result_queue.get()
         if not ok:
             raise RuntimeError(message or f"Topshot generation failed for {map_rel}")
+        return
 
-    if worker.exitcode not in (0, None):
-        raise RuntimeError(f"Topshot generation process failed with exit code {worker.exitcode} for {map_rel}")
+    raise RuntimeError(f"Topshot generation process completed without a result for {map_rel}")
 
 
 def request_topshot_via_api(map_rel: str) -> None:
