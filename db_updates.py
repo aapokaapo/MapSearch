@@ -484,7 +484,7 @@ def _render_topshot_textured(bsp_path: str, pball_root: str, max_resolution: int
                 tri_mask = Image.new("L", (img_w, img_h), 0)
                 ImageDraw.Draw(tri_mask).polygon(poly_px, fill=255)
                 tex_canvas = src_img.transform(
-                    (img_w, img_h), Image.AFFINE, coeffs, resample=Image.BILINEAR,
+                    (img_w, img_h), Image.Transform.AFFINE, coeffs, resample=Image.Resampling.BILINEAR,
                 )
                 img.paste(tex_canvas, (0, 0), tri_mask)
                 continue
