@@ -514,8 +514,8 @@ def generate_topshot(map_rel: str) -> None:
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    img = _render_topshot_textured(bsp_path, pball_path)
-    img.convert("RGB").save(out_path, "JPEG")
+    img = _render_topshot_textured(bsp_path, pball_path, max_resolution=512)
+    img.convert("RGB").save(out_path, "JPEG", quality=75, optimize=True)
 
 
 def request_topshot_via_api(map_rel: str) -> None:
