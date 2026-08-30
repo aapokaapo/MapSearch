@@ -1,7 +1,7 @@
 import codecs
-import multiprocessing as mp
 import os
 import sys
+import multiprocessing as mp
 
 from sqlmodel import Session, select
 
@@ -514,14 +514,8 @@ def generate_topshot(map_rel: str) -> None:
     img.convert("RGB").save(out_path, "JPEG")
 
 
-def _generate_topshot_worker(map_rel: str, result_conn: "mp.connection.Connection") -> None:
-    try:
-        generate_topshot(map_rel)
-        result_conn.send((True, None))
-    except Exception as e:
-        result_conn.send((False, str(e)))
-    finally:
-        result_conn.close()
+def _generate_topshot_worker(map_rel: str) -> None:
+    generate_topshot(map_rel)
 
 
 def generate_topshot_with_timeout(map_rel: str, timeout_seconds: float = 45) -> None:
@@ -529,32 +523,28 @@ def generate_topshot_with_timeout(map_rel: str, timeout_seconds: float = 45) -> 
         generate_topshot(map_rel)
         return
 
-    ctx = mp.get_context("spawn")
-    parent_conn, child_conn = ctx.Pipe(duplex=False)
-    worker = ctx.Process(target=_generate_topshot_worker, args=(map_rel, child_conn))
+    normalized_map_rel = _normalize_map_rel(map_rel)
+    out_path = _safe_join_under_root(topshot_path, normalized_map_rel, ".jpg")
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
+    start_method = "fork" if "fork" in mp.get_all_start_methods() else "spawn"
+    ctx = mp.get_context(start_method)
+    worker = ctx.Process(target=_generate_topshot_worker, args=(normalized_map_rel,))
     worker.start()
-    child_conn.close()
     worker.join(timeout_seconds)
 
     if worker.is_alive():
         worker.terminate()
         worker.join(5)
-        parent_conn.close()
         raise TimeoutError(f"Topshot generation timed out after {timeout_seconds} seconds for {map_rel}")
 
-    has_result = parent_conn.poll(1.0 if worker.exitcode in (0, None) else 0.0)
-    if has_result:
-        ok, message = parent_conn.recv()
-        parent_conn.close()
-        if not ok:
-            raise RuntimeError(message or f"Topshot generation failed for {map_rel}")
-        return
-
-    parent_conn.close()
     if worker.exitcode not in (0, None):
         raise RuntimeError(f"Topshot generation process failed with exit code {worker.exitcode} for {map_rel}")
 
-    raise RuntimeError(f"Topshot generation process completed without a result for {map_rel}")
+    if not os.path.isfile(out_path):
+        raise RuntimeError(f"Topshot generation completed but output file was not created: {normalized_map_rel}")
 
 
 def request_topshot_via_api(map_rel: str) -> None:
