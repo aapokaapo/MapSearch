@@ -83,6 +83,17 @@ def _find_existing_map_rel(keyword: str, session: Session) -> tuple[str | None, 
     return None, []
 
 
+def _iter_existing_bsp_map_rels() -> list[str]:
+    map_rels = []
+    for root, _, files in os.walk(map_path):
+        for filename in files:
+            if not filename.lower().endswith(".bsp"):
+                continue
+            full_path = os.path.join(root, filename)
+            map_rels.append(os.path.splitext(os.path.relpath(full_path, map_path).replace("\\", "/"))[0])
+    return sorted(set(map_rels))
+
+
 # ---------------------------------------------------------------------------
 # Public commands
 # ---------------------------------------------------------------------------
@@ -387,6 +398,74 @@ async def upload_map(
         if topshot_fail:
             lines.append(f"⚠️ Topshot generation failed: {'; '.join(topshot_fail)}")
         await ctx.channel.send("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Topshot management commands (administrator only)
+# ---------------------------------------------------------------------------
+
+@bot.slash_command(
+    description="Regenerate a topshot for one map or all maps (admin only)",
+    default_member_permissions=discord.Permissions(administrator=True),
+)
+async def regenerate_topshot(
+    ctx: discord.ApplicationContext,
+    map_name: str = "",
+    all_maps: bool = False,
+):
+    await ctx.defer()
+
+    if not all_maps and not map_name:
+        await ctx.respond("Error: Provide `map_name` or set `all_maps` to true.")
+        return
+
+    if all_maps:
+        target_maps = _iter_existing_bsp_map_rels()
+        if not target_maps:
+            await ctx.respond("Error: No BSP files were found.")
+            return
+    else:
+        with Session(engine) as session:
+            target_map_rel, matches = _find_existing_map_rel(map_name, session)
+
+        if matches:
+            names_str = "\n".join(f"`{match}`" for match in matches[:10])
+            if len(matches) > 10:
+                names_str += "\n…and more"
+            await ctx.respond(
+                "Error: Multiple BSPs match that map name. Use the full map path.\n"
+                + names_str
+            )
+            return
+
+        if not target_map_rel:
+            await ctx.respond("Error: No matching BSP exists for that map name.")
+            return
+
+        target_maps = [target_map_rel]
+
+    topshot_ok: list[str] = []
+    topshot_fail: list[str] = []
+    for target_map in target_maps:
+        try:
+            request_topshot_via_api(target_map)
+            topshot_ok.append(target_map)
+        except Exception as e:
+            topshot_fail.append(f"`{target_map}` ({e})")
+
+    lines = [f"🛰️ Topshot regeneration finished for {len(target_maps)} map(s)."]
+    if topshot_ok:
+        success_preview = ", ".join(f"`{m}`" for m in topshot_ok[:10])
+        if len(topshot_ok) > 10:
+            success_preview += ", …"
+        lines.append(f"✅ Regenerated ({len(topshot_ok)}): {success_preview}")
+    if topshot_fail:
+        fail_preview = "; ".join(topshot_fail[:10])
+        if len(topshot_fail) > 10:
+            fail_preview += "; …"
+        lines.append(f"⚠️ Failed ({len(topshot_fail)}): {fail_preview}")
+
+    await ctx.respond("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
