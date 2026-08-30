@@ -130,7 +130,7 @@ def remove_tag(map_name: str, tag: str, session: Session) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Topshot rendering — same BSP culling + UV logic as the 3D viewer (api.py)
+# Topshot rendering — top-down overview with BSP culling
 # ---------------------------------------------------------------------------
 
 # Surface flags (mirror of api.py constants)
@@ -139,17 +139,6 @@ _SURF_TRANS33 = 0x0010
 _SURF_TRANS66 = 0x0020
 _SURF_NODRAW = 0x0080
 _CULLED_TEXTURE_NAMES = {"sky", "hint", "clip", "skip"}
-_BROWSER_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp")
-# UV-scale overrides: multiplies BSP texel coords to get pixel coords in the
-# chosen image (needed when the on-disk image differs in size from what the BSP
-# UV values assume).  Mirror of api.py's _TEXTURE_UV_SCALE_OVERRIDES /
-# _TEXTURE_HR4_UV_SCALE_OVERRIDES.
-_TS_UV_SCALE_OVERRIDES: dict[str, float] = {
-    "chainlink1": 8,
-}
-_TS_HR4_UV_SCALE_OVERRIDES: dict[str, float] = {
-    "chainlink1": 16,
-}
 
 
 def _ts_bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
@@ -233,78 +222,21 @@ def _ts_parse_bsp(bsp_path: str) -> dict:
             "faces": faces, "tex_infos": tex_infos}
 
 
-def _ts_resolve_texture_disk(texture_name: str, pball_root: str) -> tuple[str | None, float]:
+
+def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image.Image":
     """
-    Return (disk_path, uv_scale) for the best available texture image.
+    Render a top-down orthographic overview of the BSP map.
 
-    uv_scale is the multiplier applied to BSP texel UV coordinates to convert
-    them to pixel coordinates in the returned image (mirrors api.py logic).
+    The camera looks straight down the BSP Z axis so the XY plane of the map
+    is projected onto the image.  Surfaces are culled using the same rules as
+    the 3D viewer (sky, nodraw, hint, clip, skip).  Back-facing opaque surfaces
+    are culled via the 2-D signed area of their projection (FrontSide); transparent
+    surfaces are rendered from both sides (DoubleSide).  Painter's algorithm
+    (back-to-front by Z elevation) handles depth ordering.  Each polygon is
+    filled with a solid grey shade derived from its elevation (dark = low,
+    light = high).  Returns a PIL RGBA image.
     """
-    tex_rel = texture_name.strip("/").replace("\\", "/")
-    if not tex_rel:
-        return None, 1.0
-    tex_dir, tex_base = os.path.split(tex_rel)
-    candidates = []
-    for ext in _BROWSER_TEXTURE_EXTS:
-        if tex_dir:
-            hr4_scale = _TS_HR4_UV_SCALE_OVERRIDES.get(tex_base.lower(), 4)
-            candidates.append((os.path.join("textures", tex_dir, "hr4", f"{tex_base}.{ext}"), hr4_scale))
-        default_scale = _TS_UV_SCALE_OVERRIDES.get(tex_base.lower(), 1)
-        candidates.append((os.path.join("textures", f"{tex_rel}.{ext}"), default_scale))
-    for rel_disk, uv_scale in candidates:
-        disk_path = os.path.realpath(os.path.join(pball_root, rel_disk))
-        if disk_path.startswith(pball_root + os.sep) and os.path.isfile(disk_path):
-            return disk_path, float(uv_scale)
-    return None, 1.0
-
-
-def _ts_tri_affine(
-    src0: tuple, src1: tuple, src2: tuple,
-    dst0: tuple, dst1: tuple, dst2: tuple,
-) -> tuple | None:
-    """
-    Return PIL AFFINE coefficients (a,b,c,d,e,f) such that:
-        src_x = a*dst_x + b*dst_y + c
-        src_y = d*dst_x + e*dst_y + f
-    Returns None if the destination triangle is degenerate.
-    """
-    dx0, dy0 = dst0; sx0, sy0 = src0
-    dx1, dy1 = dst1; sx1, sy1 = src1
-    dx2, dy2 = dst2; sx2, sy2 = src2
-    det = dx0 * (dy1 - dy2) - dy0 * (dx1 - dx2) + (dx1 * dy2 - dx2 * dy1)
-    if abs(det) < 1e-10:
-        return None
-    inv = 1.0 / det
-    a00 = (dy1 - dy2) * inv;  a01 = (dy2 - dy0) * inv;  a02 = (dy0 - dy1) * inv
-    a10 = (dx2 - dx1) * inv;  a11 = (dx0 - dx2) * inv;  a12 = (dx1 - dx0) * inv
-    a20 = (dx1 * dy2 - dx2 * dy1) * inv
-    a21 = (dx2 * dy0 - dx0 * dy2) * inv
-    a22 = (dx0 * dy1 - dx1 * dy0) * inv
-    a = sx0 * a00 + sx1 * a01 + sx2 * a02
-    b = sx0 * a10 + sx1 * a11 + sx2 * a12
-    c = sx0 * a20 + sx1 * a21 + sx2 * a22
-    d = sy0 * a00 + sy1 * a01 + sy2 * a02
-    e = sy0 * a10 + sy1 * a11 + sy2 * a12
-    f = sy0 * a20 + sy1 * a21 + sy2 * a22
-    return (a, b, c, d, e, f)
-
-
-def _render_topshot_textured(bsp_path: str, pball_root: str, max_resolution: int = 2048) -> "Image.Image":
-    """
-    Render a 45° yaw + 45° pitch isometric view of the BSP with textures.
-
-    Uses the same surface culling, UV computation, and coordinate mapping as the
-    3D viewer (api.py).  Textures are loaded from disk, tiled as needed, and
-    painted back-to-front using a painter's algorithm with affine texture mapping
-    and diffuse lighting.  Returns a PIL RGBA image with a white background.
-    """
-    import math
-    from PIL import Image, ImageDraw, ImageEnhance
-
-    AMBIENT = 0.35
-    DIFFUSE = 0.65
-    _inv_sqrt3 = 1.0 / math.sqrt(3.0)
-    LIGHT_DIR = (-_inv_sqrt3, -_inv_sqrt3, _inv_sqrt3)
+    from PIL import Image, ImageDraw
 
     parsed = _ts_parse_bsp(bsp_path)
     vertices = parsed["vertices"]
@@ -313,40 +245,10 @@ def _render_topshot_textured(bsp_path: str, pball_root: str, max_resolution: int
     tex_infos = parsed["tex_infos"]
     faces = parsed["faces"]
 
-    pball_root = os.path.realpath(pball_root.rstrip("/"))
-
-    # Texture cache: name → (PIL Image | None, uv_scale)
-    tex_cache: dict[str, tuple] = {}
-
-    def _get_texture(name: str) -> tuple:
-        if name in tex_cache:
-            return tex_cache[name]
-        disk_path, uv_scale = _ts_resolve_texture_disk(name, pball_root)
-        result: tuple
-        if disk_path:
-            try:
-                result = (Image.open(disk_path).convert("RGBA"), uv_scale)
-            except Exception:
-                result = (None, 1.0)
-        else:
-            result = (None, 1.0)
-        tex_cache[name] = result
-        return result
-
-    cos45 = math.cos(math.radians(45))
-    sin45 = math.sin(math.radians(45))
-
-    def _project(bx: float, by: float, bz: float) -> tuple[float, float, float]:
-        # Coordinate swap identical to api.py viewer: (BSP_x, BSP_z, -BSP_y)
-        vx, vy, vz = bx, bz, -by
-        # Yaw 45° around viewer-Y axis (rotate in X-Z plane)
-        vx, vz = cos45 * vx + sin45 * vz, -sin45 * vx + cos45 * vz
-        # Pitch 45° around viewer-X axis (rotate in Y-Z plane)
-        vy, vz = cos45 * vy - sin45 * vz, sin45 * vy + cos45 * vz
-        return vx, vy, vz  # screen_x, screen_y, depth
-
-    # Collect all visible triangles
-    triangles: list[tuple] = []
+    # Collect all visible polygons with their screen-space data.
+    # Top-down projection: screen_x = BSP_x, screen_y = -BSP_y, depth = BSP_z
+    # (negating Y so the image Y axis increases downward as in screen space).
+    polys: list[tuple] = []  # (avg_z, screen_pts, opacity)
 
     for first_edge, num_edges, texinfo_idx in faces:
         if num_edges < 3 or texinfo_idx < 0 or texinfo_idx >= len(tex_infos):
@@ -360,149 +262,85 @@ def _render_topshot_textured(bsp_path: str, pball_root: str, max_resolution: int
             continue
 
         opacity = _ts_opacity(tex_info["flags"])
-        s = tex_info["s"]
-        tv = tex_info["t"]
 
-        screen_verts = []
-        uv_verts = []
+        # Project vertices to screen space and record depth.
+        sx_list = []
+        sy_list = []
+        z_list = []
         for vi in face_indices:
             bx, by, bz = vertices[vi]
-            sx, sy, depth = _project(bx, by, bz)
-            screen_verts.append((sx, sy, depth))
-            # BSP texel-space UVs (same formula as api.py; v not negated here
-            # because PIL pixel space and BSP V axis both increase downward)
-            u = bx * s[0] + by * s[1] + bz * s[2] + s[3]
-            v = bx * tv[0] + by * tv[1] + bz * tv[2] + tv[3]
-            uv_verts.append((u, v))
+            sx_list.append(bx)
+            sy_list.append(-by)
+            z_list.append(bz)
 
-        # Compute projected face normal via cross product for back-face culling
-        # and diffuse lighting.
-        p0 = screen_verts[0]; p1 = screen_verts[1]; p2 = screen_verts[2]
-        ax = p1[0] - p0[0]; ay = p1[1] - p0[1]; az = p1[2] - p0[2]
-        bx2 = p2[0] - p0[0]; by2 = p2[1] - p0[1]; bz2 = p2[2] - p0[2]
-        nx = ay * bz2 - az * by2
-        ny = az * bx2 - ax * bz2
-        nz = ax * by2 - ay * bx2
-        # Camera faces +Z after the isometric rotation.
-        # Opaque faces: cull back-facing polygons (FrontSide, like the 3D viewer).
-        # Transparent faces: render both sides (DoubleSide, like the 3D viewer),
-        # but flip the normal so diffuse lighting is correct for back-facing geometry.
-        if nz < 0:
+        # Back-face culling via 2-D signed area (Shoelace formula).
+        # The projection is (BSP_x, -BSP_y), so a positive signed area means
+        # the polygon winds CCW in screen space, i.e. it faces the camera
+        # looking straight down.  A negative (or zero) area means back-facing.
+        # Opaque surfaces: cull back-faces (FrontSide), matching the 3D viewer.
+        # Transparent surfaces: render from both sides (DoubleSide).
+        n = len(sx_list)
+        signed_area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            signed_area += sx_list[i] * sy_list[j] - sx_list[j] * sy_list[i]
+
+        if signed_area <= 0:
             if opacity >= 1.0:
-                continue
-            nx = -nx; ny = -ny; nz = -nz
-        mag = math.sqrt(nx * nx + ny * ny + nz * nz)
-        if mag > 0:
-            nx /= mag; ny /= mag; nz /= mag
+                continue  # back-facing opaque surface — cull it
 
-        # Fan-triangulate the face
-        v0_s = screen_verts[0]; u0 = uv_verts[0]
-        for t in range(1, len(face_indices) - 1):
-            v1_s = screen_verts[t]; v2_s = screen_verts[t + 1]
-            u1 = uv_verts[t]; u2 = uv_verts[t + 1]
-            depth_avg = (v0_s[2] + v1_s[2] + v2_s[2]) / 3.0
-            triangles.append((
-                depth_avg,
-                ((v0_s[0], v0_s[1]), (v1_s[0], v1_s[1]), (v2_s[0], v2_s[1])),
-                texture_name,
-                (u0, u1, u2),
-                opacity,
-                (nx, ny, nz),
-            ))
+        avg_z = sum(z_list) / len(z_list)
+        screen_pts = list(zip(sx_list, sy_list))
+        polys.append((avg_z, screen_pts, opacity))
 
-    if not triangles:
+    if not polys:
         return Image.new("RGBA", (max_resolution, max_resolution), (255, 255, 255, 255))
 
-    all_pts = [(p[0], p[1]) for _, pts, *_ in triangles for p in pts]
-    min_x = min(p[0] for p in all_pts)
-    min_y = min(p[1] for p in all_pts)
-    max_x = max(p[0] for p in all_pts)
-    max_y = max(p[1] for p in all_pts)
+    # Compute world bounding box.
+    all_sx = [pt[0] for _, pts, _ in polys for pt in pts]
+    all_sy = [pt[1] for _, pts, _ in polys for pt in pts]
+    all_z  = [z    for z, _, _   in polys]
+
+    min_x, max_x = min(all_sx), max(all_sx)
+    min_y, max_y = min(all_sy), max(all_sy)
+    min_z, max_z = min(all_z),  max(all_z)
 
     span = max(max_x - min_x, max_y - min_y)
     if span == 0:
         span = 1.0
     scale = max_resolution / span
+    z_range = max_z - min_z if max_z != min_z else 1.0
 
     img_w = max(1, int((max_x - min_x) * scale + 0.5))
     img_h = max(1, int((max_y - min_y) * scale + 0.5))
 
     def to_px(sx: float, sy: float) -> tuple[float, float]:
-        # Flip Y so world-up maps to image-up.
-        return (sx - min_x) * scale, (max_y - sy) * scale
+        return (sx - min_x) * scale, (sy - min_y) * scale
 
-    # Painter's algorithm: ascending depth = back-to-front
-    # (larger depth = closer to camera after isometric rotation).
-    triangles.sort(key=lambda t: t[0])
+    # Painter's algorithm: draw back-to-front (lowest Z first).
+    polys.sort(key=lambda p: p[0])
 
     img = Image.new("RGBA", (img_w, img_h), (255, 255, 255, 255))
+    draw = ImageDraw.Draw(img, "RGBA")
 
-    for depth, screen_pts, tex_name, uv_pts, opacity, normal in triangles:
-        dot_light = max(0.0, sum(normal[i] * LIGHT_DIR[i] for i in range(3)))
-        brightness = AMBIENT + DIFFUSE * dot_light
-
-        px0, py0 = to_px(*screen_pts[0])
-        px1, py1 = to_px(*screen_pts[1])
-        px2, py2 = to_px(*screen_pts[2])
-        poly_px = [(px0, py0), (px1, py1), (px2, py2)]
-
-        tex_img, uv_scale = _get_texture(tex_name)
-        if tex_img is not None:
-            tw, th = tex_img.size
-
-            # Scale BSP texel UVs to pixel coords in the chosen image.
-            u0_px, v0_px = uv_pts[0][0] * uv_scale, uv_pts[0][1] * uv_scale
-            u1_px, v1_px = uv_pts[1][0] * uv_scale, uv_pts[1][1] * uv_scale
-            u2_px, v2_px = uv_pts[2][0] * uv_scale, uv_pts[2][1] * uv_scale
-
-            # Shift UVs so the minimum falls within [0, tile_size).
-            off_u = math.floor(min(u0_px, u1_px, u2_px) / tw) * tw
-            off_v = math.floor(min(v0_px, v1_px, v2_px) / th) * th
-            su0, sv0 = u0_px - off_u, v0_px - off_v
-            su1, sv1 = u1_px - off_u, v1_px - off_v
-            su2, sv2 = u2_px - off_u, v2_px - off_v
-
-            # Tile the texture enough to cover the full UV range of this triangle.
-            tiles_u = min(8, int(math.ceil(max(su0, su1, su2) / tw)) + 1)
-            tiles_v = min(8, int(math.ceil(max(sv0, sv1, sv2) / th)) + 1)
-            src_w, src_h = tiles_u * tw, tiles_v * th
-            src_img = Image.new("RGBA", (src_w, src_h))
-            for tu in range(tiles_u):
-                for tv2 in range(tiles_v):
-                    src_img.paste(tex_img, (tu * tw, tv2 * th))
-
-            src_img = ImageEnhance.Brightness(src_img).enhance(brightness)
-            if opacity < 1.0:
-                r, g, b, a = src_img.split()
-                src_img = Image.merge("RGBA", (r, g, b, a.point(lambda x: int(x * opacity))))
-
-            coeffs = _ts_tri_affine(
-                (su0, sv0), (su1, sv1), (su2, sv2),
-                (px0, py0), (px1, py1), (px2, py2),
-            )
-            if coeffs is not None:
-                tri_mask = Image.new("L", (img_w, img_h), 0)
-                ImageDraw.Draw(tri_mask).polygon(poly_px, fill=255)
-                tex_canvas = src_img.transform(
-                    (img_w, img_h), Image.Transform.AFFINE, coeffs, resample=Image.Resampling.BILINEAR,
-                )
-                img.paste(tex_canvas, (0, 0), tri_mask)
-                continue
-
-        # Fallback: flat grey lit by diffuse lighting.
-        fb = min(255, int(180 * brightness))
-        fallback_color = (fb, fb, fb, int(255 * opacity))
-        tri_mask = Image.new("L", (img_w, img_h), 0)
-        ImageDraw.Draw(tri_mask).polygon(poly_px, fill=255)
-        img.paste(Image.new("RGBA", (img_w, img_h), fallback_color), (0, 0), tri_mask)
+    for avg_z, screen_pts, opacity in polys:
+        # Map elevation to a grey shade: low elevation = dark, high = light.
+        t = (avg_z - min_z) / z_range          # 0.0 … 1.0
+        shade = int(60 + 170 * t)               # 60 (dark) … 230 (light)
+        alpha = int(255 * opacity)
+        color = (shade, shade, shade, alpha)
+        poly_px = [to_px(sx, sy) for sx, sy in screen_pts]
+        if len(poly_px) >= 3:
+            draw.polygon(poly_px, fill=color)
 
     return img
 
 
 def generate_topshot(map_rel: str) -> None:
     """
-    Generate a 45° yaw + 45° pitch isometric image for the given map and save
-    it to topshot_path.  Uses the same BSP culling and UV logic as the 3D viewer.
+    Generate a top-down overview image for the given map and save it to
+    topshot_path.  Uses BSP culling (sky, nodraw, hint, clip, skip) and a
+    height-based grey shading with painter's algorithm for depth ordering.
     """
     normalized_map_rel = _normalize_map_rel(map_rel)
     bsp_path = _safe_join_under_root(map_path, normalized_map_rel, ".bsp")
@@ -514,7 +352,7 @@ def generate_topshot(map_rel: str) -> None:
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    img = _render_topshot_textured(bsp_path, pball_path, max_resolution=512)
+    img = _render_topshot_topdown(bsp_path, max_resolution=1024)
     img.convert("RGB").save(out_path, "JPEG", quality=75, optimize=True)
 
 
