@@ -1,4 +1,5 @@
 import codecs
+import multiprocessing as mp
 import os
 import sys
 
@@ -511,6 +512,39 @@ def generate_topshot(map_rel: str) -> None:
 
     img = _render_topshot_textured(bsp_path, pball_path)
     img.convert("RGB").save(out_path, "JPEG")
+
+
+def _generate_topshot_worker(map_rel: str, result_queue: "mp.Queue") -> None:
+    try:
+        generate_topshot(map_rel)
+        result_queue.put((True, None))
+    except Exception as e:
+        result_queue.put((False, str(e)))
+
+
+def generate_topshot_with_timeout(map_rel: str, timeout_seconds: float = 45) -> None:
+    if timeout_seconds <= 0:
+        generate_topshot(map_rel)
+        return
+
+    ctx = mp.get_context("spawn")
+    result_queue = ctx.Queue(maxsize=1)
+    worker = ctx.Process(target=_generate_topshot_worker, args=(map_rel, result_queue), daemon=True)
+    worker.start()
+    worker.join(timeout_seconds)
+
+    if worker.is_alive():
+        worker.terminate()
+        worker.join(5)
+        raise TimeoutError(f"Topshot generation timed out after {timeout_seconds} seconds for {map_rel}")
+
+    if not result_queue.empty():
+        ok, message = result_queue.get()
+        if not ok:
+            raise RuntimeError(message or f"Topshot generation failed for {map_rel}")
+
+    if worker.exitcode not in (0, None):
+        raise RuntimeError(f"Topshot generation process failed with exit code {worker.exitcode} for {map_rel}")
 
 
 def request_topshot_via_api(map_rel: str) -> None:
