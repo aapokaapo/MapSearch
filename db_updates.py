@@ -519,17 +519,13 @@ def _generate_topshot_worker(map_rel: str) -> None:
 
 
 def generate_topshot_with_timeout(map_rel: str, timeout_seconds: float = 45) -> None:
+    normalized_map_rel = _normalize_map_rel(map_rel)
     if timeout_seconds <= 0:
-        generate_topshot(map_rel)
+        generate_topshot(normalized_map_rel)
         return
 
-    normalized_map_rel = _normalize_map_rel(map_rel)
-    out_path = _safe_join_under_root(topshot_path, normalized_map_rel, ".jpg")
-    out_dir = os.path.dirname(out_path)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
-
-    start_method = "fork" if "fork" in mp.get_all_start_methods() else "spawn"
+    start_methods = mp.get_all_start_methods()
+    start_method = "forkserver" if "forkserver" in start_methods else "spawn"
     ctx = mp.get_context(start_method)
     worker = ctx.Process(target=_generate_topshot_worker, args=(normalized_map_rel,))
     worker.start()
@@ -538,13 +534,17 @@ def generate_topshot_with_timeout(map_rel: str, timeout_seconds: float = 45) -> 
     if worker.is_alive():
         worker.terminate()
         worker.join(5)
-        raise TimeoutError(f"Topshot generation timed out after {timeout_seconds} seconds for {map_rel}")
+        if worker.is_alive():
+            worker.kill()
+            worker.join(5)
+        raise TimeoutError(
+            f"Topshot generation timed out after {timeout_seconds} seconds for {normalized_map_rel}"
+        )
 
-    if worker.exitcode not in (0, None):
-        raise RuntimeError(f"Topshot generation process failed with exit code {worker.exitcode} for {map_rel}")
-
-    if not os.path.isfile(out_path):
-        raise RuntimeError(f"Topshot generation completed but output file was not created: {normalized_map_rel}")
+    if worker.exitcode != 0:
+        raise RuntimeError(
+            f"Topshot generation process failed with exit code {worker.exitcode} for {normalized_map_rel}"
+        )
 
 
 def request_topshot_via_api(map_rel: str) -> None:
