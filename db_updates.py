@@ -542,7 +542,8 @@ def generate_topshot_with_timeout(map_rel: str, timeout_seconds: float = 45) -> 
         parent_conn.close()
         raise TimeoutError(f"Topshot generation timed out after {timeout_seconds} seconds for {map_rel}")
 
-    if parent_conn.poll():
+    has_result = parent_conn.poll(1.0 if worker.exitcode in (0, None) else 0.0)
+    if has_result:
         ok, message = parent_conn.recv()
         parent_conn.close()
         if not ok:
