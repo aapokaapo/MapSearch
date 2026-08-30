@@ -83,7 +83,7 @@ def _find_existing_map_rel(keyword: str, session: Session) -> tuple[str | None, 
     return None, []
 
 
-def _iter_existing_bsp_map_rels() -> list[str]:
+def _list_existing_bsp_map_rels() -> list[str]:
     map_rels = []
     for root, _, files in os.walk(map_path):
         for filename in files:
@@ -415,12 +415,16 @@ async def regenerate_topshot(
 ):
     await ctx.defer()
 
+    if all_maps and map_name:
+        await ctx.respond("Error: Provide either `map_name` or `all_maps`, not both.")
+        return
+
     if not all_maps and not map_name:
         await ctx.respond("Error: Provide `map_name` or set `all_maps` to true.")
         return
 
     if all_maps:
-        target_maps = _iter_existing_bsp_map_rels()
+        target_maps = _list_existing_bsp_map_rels()
         if not target_maps:
             await ctx.respond("Error: No BSP files were found.")
             return
