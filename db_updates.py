@@ -229,11 +229,12 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
 
     The camera looks straight down the BSP Z axis so the XY plane of the map
     is projected onto the image.  Surfaces are culled using the same rules as
-    the 3D viewer (sky, nodraw, hint, clip, skip).  All remaining surfaces are
-    drawn; painter's algorithm (back-to-front by Z elevation) handles depth
-    ordering without requiring per-face back-face culling.  Each polygon is
+    the 3D viewer (sky, nodraw, hint, clip, skip).  Back-facing opaque surfaces
+    are culled via the 2-D signed area of their projection (FrontSide); transparent
+    surfaces are rendered from both sides (DoubleSide).  Painter's algorithm
+    (back-to-front by Z elevation) handles depth ordering.  Each polygon is
     filled with a solid grey shade derived from its elevation (dark = low,
-    light = high) for easy depth reading.  Returns a PIL RGBA image.
+    light = high).  Returns a PIL RGBA image.
     """
     from PIL import Image, ImageDraw
 
@@ -271,6 +272,22 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
             sx_list.append(bx)
             sy_list.append(-by)
             z_list.append(bz)
+
+        # Back-face culling via 2-D signed area (Shoelace formula).
+        # The projection is (BSP_x, -BSP_y), so a positive signed area means
+        # the polygon winds CCW in screen space, i.e. it faces the camera
+        # looking straight down.  A negative (or zero) area means back-facing.
+        # Opaque surfaces: cull back-faces (FrontSide), matching the 3D viewer.
+        # Transparent surfaces: render from both sides (DoubleSide).
+        n = len(sx_list)
+        signed_area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            signed_area += sx_list[i] * sy_list[j] - sx_list[j] * sy_list[i]
+
+        if signed_area <= 0:
+            if opacity >= 1.0:
+                continue  # back-facing opaque surface — cull it
 
         avg_z = sum(z_list) / len(z_list)
         screen_pts = list(zip(sx_list, sy_list))
