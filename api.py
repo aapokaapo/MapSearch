@@ -95,6 +95,57 @@ def _resolve_map_candidates(map_ref: str, session: Session) -> List[Map]:
     return deduped
 
 
+def _beta_sort_key():
+    """Return a SQLAlchemy sort expression that puts beta/bN maps last."""
+    _is_beta = Map.map_path.like("%beta%") | Map.map_path.op("GLOB")("*_b[0-9]*")
+    return case((_is_beta, 1), else_=0)
+
+
+def _search_maps_in_db(keyword: str, session: Session) -> List[Map]:
+    kw = f"%{keyword}%"
+    tag_map_ids = session.exec(
+        select(Tag.map_id).where(Tag.tag_name.like(kw))
+    ).all()
+    return session.exec(
+        select(Map).where(
+            Map.map_path.like(kw)
+            | Map.map_name.like(kw)
+            | Map.message.like(kw)
+            | Map.map_id.in_(tag_map_ids)
+        ).order_by(_beta_sort_key())
+    ).all()
+
+
+def _index_disk_search_matches(keyword: str, session: Session) -> bool:
+    normalized_keyword = (keyword or "").strip()
+    if not normalized_keyword:
+        return False
+
+    from config import map_path as maps_dir
+    from db_updates import add_map_to_db
+
+    keyword_fold = normalized_keyword.casefold()
+    existing_map_paths = set(session.exec(select(Map.map_path)).all())
+    indexed_any = False
+
+    for root, _, files in os.walk(maps_dir):
+        for filename in files:
+            if not filename.lower().endswith(".bsp"):
+                continue
+            map_rel = os.path.splitext(
+                os.path.relpath(os.path.join(root, filename), maps_dir).replace("\\", "/")
+            )[0]
+            if map_rel in existing_map_paths:
+                continue
+            if keyword_fold not in map_rel.casefold() and keyword_fold not in os.path.splitext(filename)[0].casefold():
+                continue
+            add_map_to_db(map_rel, session)
+            existing_map_paths.add(map_rel)
+            indexed_any = True
+
+    return indexed_any
+
+
 # ---------------------------------------------------------------------------
 # Map endpoints
 # ---------------------------------------------------------------------------
@@ -108,20 +159,10 @@ def list_maps(session: Session = Depends(get_session)):
 @app.get("/api/maps/search", response_model=List[Map])
 def search_maps(keyword: str, session: Session = Depends(get_session)):
     """Search maps by keyword matching name, path, message, or tag."""
-    kw = f"%{keyword}%"
-    tag_map_ids = session.exec(
-        select(Tag.map_id).where(Tag.tag_name.like(kw))
-    ).all()
-    _is_beta = Map.map_path.like("%beta%") | Map.map_path.op("GLOB")("*_b[0-9]*")
-    results = session.exec(
-        select(Map).where(
-            Map.map_path.like(kw)
-            | Map.map_name.like(kw)
-            | Map.message.like(kw)
-            | Map.map_id.in_(tag_map_ids)
-        ).order_by(case((_is_beta, 1), else_=0))
-    ).all()
-    return results
+    results = _search_maps_in_db(keyword, session)
+    if results or not _index_disk_search_matches(keyword, session):
+        return results
+    return _search_maps_in_db(keyword, session)
 
 
 @app.get("/api/maps/{map_path:path}/files")
