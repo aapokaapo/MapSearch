@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import struct
 import sys
 import zipfile
@@ -18,6 +19,80 @@ _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(_BASE_DIR, "bsp_hacking"))
 
 app = FastAPI(title="MapSearch API")
+
+_BETA_SUFFIX_RE = re.compile(r"^(.*?)(?:_b\d+|_beta\d+)$", re.IGNORECASE)
+
+
+def _normalize_map_ref(map_ref: str) -> str:
+    normalized = os.path.normpath((map_ref or "").replace("\\", "/")).replace("\\", "/")
+    if normalized in {"", "."}:
+        return ""
+    parts = [part for part in normalized.split("/") if part not in {"", ".", ".."}]
+    return "/".join(parts)
+
+
+def _map_base_name(map_name: str) -> str:
+    basename = (map_name or "").rsplit("/", 1)[-1]
+    match = _BETA_SUFFIX_RE.match(basename)
+    return match.group(1) if match else basename
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _resolve_map_candidates(map_ref: str, session: Session) -> List[Map]:
+    normalized = _normalize_map_ref(map_ref)
+    if not normalized:
+        return []
+
+    candidates: list[Map] = []
+    candidates.extend(
+        session.exec(
+            select(Map).where((Map.map_path == normalized) | (Map.map_name == normalized))
+        ).all()
+    )
+
+    stem = normalized
+    if "/" not in normalized:
+        candidates.extend(
+            session.exec(select(Map).where(Map.map_path == f"beta/{normalized}")).all()
+        )
+
+        stem = _map_base_name(normalized)
+        if stem:
+            escaped_stem = _escape_like(stem)
+            candidates.extend(
+                session.exec(
+                    select(Map).where(
+                        (Map.map_name == stem)
+                        | (Map.map_path == stem)
+                        | Map.map_name.like(f"{escaped_stem}\\_b%", escape="\\")
+                        | Map.map_name.like(f"{escaped_stem}\\_beta%", escape="\\")
+                    )
+                ).all()
+            )
+
+    stem_lower = stem.lower()
+
+    def _rank(db_map: Map) -> tuple[int, int]:
+        map_id = db_map.map_id or 0
+        if db_map.map_path == normalized or db_map.map_name == normalized:
+            return (0, -map_id)
+        if "/" not in normalized and db_map.map_path == f"beta/{normalized}":
+            return (1, -map_id)
+        if "/" not in normalized and _map_base_name(db_map.map_name).lower() == stem_lower:
+            return (3 if db_map.map_path.startswith("beta/") else 2, -map_id)
+        return (4, -map_id)
+
+    deduped: list[Map] = []
+    seen_ids: set[int] = set()
+    for db_map in sorted(candidates, key=_rank):
+        if db_map.map_id is None or db_map.map_id in seen_ids:
+            continue
+        seen_ids.add(db_map.map_id)
+        deduped.append(db_map)
+    return deduped
 
 
 # ---------------------------------------------------------------------------
@@ -545,33 +620,33 @@ def get_map_image(map_path: str, session: Session = Depends(get_session)):
     from config import mapshot_path, topshot_path, map_path as maps_dir
     from db_updates import generate_topshot, iter_image_map_rels
 
-    # Resolve to a trusted DB record so that path used for file I/O and
-    # redirects comes from our database, not directly from user input.
     requested_map_ref = urllib.parse.unquote(map_path)
-    db_map = session.exec(
-        select(Map).where((Map.map_path == requested_map_ref) | (Map.map_name == requested_map_ref))
-    ).first()
-    if not db_map:
+    candidate_maps = _resolve_map_candidates(requested_map_ref, session)
+    if not candidate_maps:
         raise HTTPException(status_code=404, detail="Map not found")
 
-    trusted_path = db_map.map_path
-
-    def _first_existing_image(directory: str) -> str | None:
+    def _first_existing_image(directory: str, trusted_path: str) -> str | None:
         for image_map_rel in iter_image_map_rels(trusted_path):
             image_path = os.path.join(directory, image_map_rel + ".jpg")
             if os.path.isfile(image_path):
                 return image_map_rel
         return None
 
-    mapshot_rel = _first_existing_image(mapshot_path)
-    if mapshot_rel:
-        safe_url_path = urllib.parse.quote(mapshot_rel, safe="/")
-        return RedirectResponse(url=f"/mapshots/{safe_url_path}.jpg", status_code=302)
+    for db_map in candidate_maps:
+        mapshot_rel = _first_existing_image(mapshot_path, db_map.map_path)
+        if mapshot_rel:
+            safe_url_path = urllib.parse.quote(mapshot_rel, safe="/")
+            return RedirectResponse(url=f"/mapshots/{safe_url_path}.jpg", status_code=302)
 
-    topshot_rel = _first_existing_image(topshot_path)
+    for db_map in candidate_maps:
+        topshot_rel = _first_existing_image(topshot_path, db_map.map_path)
+        if topshot_rel:
+            safe_url_path = urllib.parse.quote(topshot_rel, safe="/")
+            return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
+
     generation_errors: list[str] = []
-    if not topshot_rel:
-        # Try to generate the topshot on-demand from the BSP.
+    for db_map in candidate_maps:
+        trusted_path = db_map.map_path
         for candidate_map_rel in iter_image_map_rels(trusted_path):
             bsp = os.path.join(maps_dir, candidate_map_rel + ".bsp")
             if not os.path.isfile(bsp):
@@ -582,13 +657,10 @@ def get_map_image(map_path: str, session: Session = Depends(get_session)):
                 generation_errors.append(f"{candidate_map_rel}: {e}")
                 continue
 
-            topshot_rel = _first_existing_image(topshot_path)
+            topshot_rel = _first_existing_image(topshot_path, trusted_path)
             if topshot_rel:
-                break
-
-    if topshot_rel:
-        safe_url_path = urllib.parse.quote(topshot_rel, safe="/")
-        return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
+                safe_url_path = urllib.parse.quote(topshot_rel, safe="/")
+                return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
 
     if generation_errors:
         raise HTTPException(
@@ -607,22 +679,21 @@ def get_or_create_map_topshot(map_path: str, session: Session = Depends(get_sess
     from db_updates import generate_topshot, iter_image_map_rels
 
     requested_map_ref = urllib.parse.unquote(map_path)
-    db_map = session.exec(
-        select(Map).where((Map.map_path == requested_map_ref) | (Map.map_name == requested_map_ref))
-    ).first()
-    if not db_map:
+    candidate_maps = _resolve_map_candidates(requested_map_ref, session)
+    if not candidate_maps:
         raise HTTPException(status_code=404, detail="Map not found")
 
-    trusted_path = db_map.map_path
-    topshot_rel = None
-    for candidate_map_rel in iter_image_map_rels(trusted_path):
-        candidate_topshot = os.path.join(topshot_path, candidate_map_rel + ".jpg")
-        if os.path.isfile(candidate_topshot):
-            topshot_rel = candidate_map_rel
-            break
+    for db_map in candidate_maps:
+        trusted_path = db_map.map_path
+        for candidate_map_rel in iter_image_map_rels(trusted_path):
+            candidate_topshot = os.path.join(topshot_path, candidate_map_rel + ".jpg")
+            if os.path.isfile(candidate_topshot):
+                safe_url_path = urllib.parse.quote(candidate_map_rel, safe="/")
+                return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
 
     generation_errors: list[str] = []
-    if not topshot_rel:
+    for db_map in candidate_maps:
+        trusted_path = db_map.map_path
         for candidate_map_rel in iter_image_map_rels(trusted_path):
             bsp = os.path.join(maps_dir, candidate_map_rel + ".bsp")
             if not os.path.isfile(bsp):
@@ -631,14 +702,10 @@ def get_or_create_map_topshot(map_path: str, session: Session = Depends(get_sess
                 generate_topshot(candidate_map_rel)
                 candidate_topshot = os.path.join(topshot_path, candidate_map_rel + ".jpg")
                 if os.path.isfile(candidate_topshot):
-                    topshot_rel = candidate_map_rel
-                    break
+                    safe_url_path = urllib.parse.quote(candidate_map_rel, safe="/")
+                    return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
             except Exception as e:
                 generation_errors.append(f"{candidate_map_rel}: {e}")
-
-    if topshot_rel:
-        safe_url_path = urllib.parse.quote(topshot_rel, safe="/")
-        return RedirectResponse(url=f"/topshots/{safe_url_path}.jpg", status_code=302)
 
     if generation_errors:
         raise HTTPException(
