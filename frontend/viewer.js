@@ -5,6 +5,7 @@ async function initViewer(base, mapPath) {
   const canvas = document.getElementById("viewer-canvas");
   const overlay = document.getElementById("loading-overlay");
   const loadMsg = document.getElementById("loading-msg");
+  let ambientLight, hemiLight, keyLight, fillLight;
 
   function showError(msg) {
     if (overlay) overlay.classList.add("hidden");
@@ -21,14 +22,23 @@ async function initViewer(base, mapPath) {
     renderer.setPixelRatio(devicePixelRatio);
     renderer.setClearColor(0x080a0f);
     renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     scene = new THREE.Scene();
-    scene.add(new THREE.AmbientLight(0xffffff, 0.3));
-    scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x2d2218, 0.85));
-    const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+    scene.add(ambientLight);
+    hemiLight = new THREE.HemisphereLight(0xbfd9ff, 0x2d2218, 0.85);
+    scene.add(hemiLight);
+    keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
     keyLight.position.set(1, 2, 1);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(2048, 2048);
+    keyLight.shadow.bias = -0.0005;
+    keyLight.shadow.normalBias = 0.75;
     scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0xaec8ff, 0.35);
+    scene.add(keyLight.target);
+    fillLight = new THREE.DirectionalLight(0xaec8ff, 0.35);
     fillLight.position.set(-1.5, 1, -0.8);
     scene.add(fillLight);
 
@@ -85,6 +95,8 @@ async function initViewer(base, mapPath) {
     if (!geo) throw new Error("Could not parse geometry.");
 
     const mesh = new THREE.Mesh(geo, materials);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     scene.add(mesh);
 
     // Center camera on bounding box
@@ -95,6 +107,7 @@ async function initViewer(base, mapPath) {
     const size = new THREE.Vector3();
     box.getSize(size);
     const maxDim = Math.max(size.x, size.y, size.z);
+    applyWorldspawnSkyLighting(meshData.sky_lighting, center, maxDim, ambientLight, hemiLight, keyLight, fillLight);
     camera.position.copy(center).add(new THREE.Vector3(0, maxDim * 0.4, maxDim * 1.2));
     controls.target.copy(center);
     controls.update();
@@ -177,4 +190,55 @@ function hashColor(text) {
   const g = 120 + ((hash >> 8) & 0x7f);
   const b = 120 + (hash & 0x7f);
   return (r << 16) | (g << 8) | b;
+}
+
+function applyWorldspawnSkyLighting(lighting, center, maxDim, ambientLight, hemiLight, keyLight, fillLight) {
+  const lightOffset = Math.max(maxDim, 1);
+  const sunColor = toSkyLightColor(lighting?.sunlight_color);
+  const sunStrength = toSkyLightIntensity(lighting?.sunlight);
+  const lightDirection = toSkyLightDirection(lighting?.sun_direction);
+  const skyTint = sunColor.clone().lerp(new THREE.Color(0xbfd9ff), 0.45);
+  const groundTint = sunColor.clone().lerp(new THREE.Color(0x2d2218), 0.8);
+
+  ambientLight.color.copy(sunColor.clone().lerp(new THREE.Color(0xffffff), 0.6));
+  ambientLight.intensity = Math.min(0.55, 0.16 + sunStrength * 0.12);
+  hemiLight.color.copy(skyTint);
+  hemiLight.groundColor.copy(groundTint);
+  hemiLight.intensity = Math.min(1.15, 0.45 + sunStrength * 0.4);
+
+  keyLight.color.copy(sunColor);
+  keyLight.intensity = sunStrength;
+  keyLight.position.copy(center).add(lightDirection.clone().multiplyScalar(lightOffset));
+  keyLight.target.position.copy(center);
+  keyLight.shadow.camera.left = -lightOffset * 0.7;
+  keyLight.shadow.camera.right = lightOffset * 0.7;
+  keyLight.shadow.camera.top = lightOffset * 0.7;
+  keyLight.shadow.camera.bottom = -lightOffset * 0.7;
+  keyLight.shadow.camera.near = 1;
+  keyLight.shadow.camera.far = lightOffset * 3;
+  keyLight.shadow.camera.updateProjectionMatrix();
+
+  fillLight.color.copy(skyTint);
+  fillLight.intensity = Math.max(0.18, sunStrength * 0.35);
+  fillLight.position.copy(center).add(lightDirection.clone().multiplyScalar(-lightOffset * 0.7)).add(new THREE.Vector3(-lightOffset * 0.15, lightOffset * 0.2, -lightOffset * 0.1));
+}
+
+function toSkyLightColor(rawColor) {
+  if (!Array.isArray(rawColor) || rawColor.length !== 3) return new THREE.Color(0xffffff);
+  const values = rawColor.map((value) => Number.isFinite(value) ? Math.max(0, value) : 1);
+  const scale = values.some((value) => value > 1) ? 255 : 1;
+  return new THREE.Color(values[0] / scale, values[1] / scale, values[2] / scale);
+}
+
+function toSkyLightIntensity(rawIntensity) {
+  if (!Number.isFinite(rawIntensity)) return 0.9;
+  return THREE.MathUtils.clamp(rawIntensity / 200, 0.2, 2.5);
+}
+
+function toSkyLightDirection(rawDirection) {
+  if (Array.isArray(rawDirection) && rawDirection.length === 3 && rawDirection.every((value) => Number.isFinite(value))) {
+    const dir = new THREE.Vector3(rawDirection[0], rawDirection[2], -rawDirection[1]).multiplyScalar(-1);
+    if (dir.lengthSq() > 0) return dir.normalize();
+  }
+  return new THREE.Vector3(0.65, 1, 0.65).normalize();
 }
