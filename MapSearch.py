@@ -95,31 +95,19 @@ def _list_existing_bsp_map_rels() -> list[str]:
     return sorted(set(map_rels))
 
 
-async def _defer_if_possible(ctx: discord.ApplicationContext) -> bool:
-    try:
-        await ctx.defer()
-        return True
-    except discord.NotFound:
-        return False
-    except discord.InteractionResponded:
-        return True
-
-
 # ---------------------------------------------------------------------------
 # Public commands
 # ---------------------------------------------------------------------------
 
 @bot.slash_command(description="Search for maps by keyword (name, message or tag)")
 async def mapsearch(ctx: discord.ApplicationContext, keyword: str):
-    if not await _defer_if_possible(ctx):
-        return
+    await ctx.defer()
     await print_map_search(keyword, ctx)
 
 
 @bot.slash_command(description="Show info for a specific map, or a random map if none specified")
 async def mapinfo(ctx: discord.ApplicationContext, map_name: str = None):
-    if not await _defer_if_possible(ctx):
-        return
+    await ctx.defer()
     with Session(engine) as session:
         await print_map_info(map_name, session, already_seen, ctx)
 
@@ -158,8 +146,7 @@ async def upload_map(
     subfolder: str = "",
     map_name: str = "",
 ):
-    if not await _defer_if_possible(ctx):
-        return
+    await ctx.defer()
 
     filename = file.filename
     lower_filename = filename.lower()
@@ -426,8 +413,7 @@ async def regenerate_topshot(
     map_name: str | None = None,
     all_maps: bool = False,
 ):
-    if not await _defer_if_possible(ctx):
-        return
+    await ctx.defer()
 
     if all_maps and map_name:
         await ctx.respond("Error: Provide either `map_name` or `all_maps`, not both.")
@@ -504,8 +490,7 @@ async def add_map_tag(
     map_name: str,
     tag: str,
 ):
-    if not await _defer_if_possible(ctx):
-        return
+    await ctx.defer()
     with Session(engine) as session:
         msg = add_tag(map_name, tag, session)
     await ctx.respond(msg)
@@ -520,8 +505,7 @@ async def remove_map_tag(
     map_name: str,
     tag: str,
 ):
-    if not await _defer_if_possible(ctx):
-        return
+    await ctx.defer()
     with Session(engine) as session:
         msg = remove_tag(map_name, tag, session)
     await ctx.respond(msg)
