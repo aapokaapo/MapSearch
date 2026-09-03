@@ -1,5 +1,4 @@
 import io
-import math
 import os
 import re
 import struct
@@ -488,71 +487,12 @@ def _parse_entity_lump(entity_text: str) -> list[dict[str, str]]:
     return entities
 
 
-def _worldspawn_entity(entity_text: str) -> dict[str, str] | None:
-    entities = _parse_entity_lump(entity_text)
-    for entity in entities:
-        if (entity.get("classname") or "").strip() == "worldspawn":
-            return entity
-    return entities[0] if entities else None
-
-
-def _parse_entity_float(value: str | None) -> float | None:
-    if not value:
-        return None
-    try:
-        return float(value.strip())
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_entity_vec3(value: str | None) -> tuple[float, float, float] | None:
-    if not value:
-        return None
-    parts = value.replace(",", " ").split()
-    if len(parts) != 3:
-        return None
-    try:
-        return tuple(float(part) for part in parts)
-    except ValueError:
-        return None
-
-
-def _mangle_to_direction(mangle: tuple[float, float, float]) -> tuple[float, float, float]:
-    pitch = math.radians(mangle[0])
-    yaw = math.radians(mangle[1])
-    return (
-        math.cos(pitch) * math.cos(yaw),
-        math.sin(pitch) * math.cos(yaw),
-        math.sin(yaw),
-    )
-
-
 def _extract_sky_name(entity_text: str) -> str | None:
-    entity = _worldspawn_entity(entity_text)
-    sky = (entity or {}).get("sky", "").strip()
-    return sky or None
-
-
-def _extract_worldspawn_sky_lighting(entity_text: str) -> dict[str, object] | None:
-    entity = _worldspawn_entity(entity_text)
-    if not entity:
-        return None
-
-    sunlight = _parse_entity_float(entity.get("_sunlight"))
-    sun_color = _parse_entity_vec3(entity.get("_sunlight_color"))
-    sun_mangle = _parse_entity_vec3(entity.get("_sun_mangle"))
-    if sunlight is None and sun_color is None and sun_mangle is None:
-        return None
-
-    result: dict[str, object] = {}
-    if sunlight is not None:
-        result["sunlight"] = sunlight
-    if sun_color is not None:
-        result["sunlight_color"] = list(sun_color)
-    if sun_mangle is not None:
-        result["sun_mangle"] = list(sun_mangle)
-        result["sun_direction"] = list(_mangle_to_direction(sun_mangle))
-    return result
+    for entity in _parse_entity_lump(entity_text):
+        sky = (entity.get("sky") or "").strip()
+        if sky:
+            return sky
+    return None
 
 
 def _resolve_skybox_urls(sky_name: str) -> list[str] | None:
@@ -766,7 +706,6 @@ def _parse_bsp_geometry(bsp_path: str):
         entity_text = data[entity_off:entity_off + entity_len].decode("cp1252", "ignore").rstrip("\x00")
 
     sky_name = _extract_sky_name(entity_text) if entity_text else None
-    sky_lighting = _extract_worldspawn_sky_lighting(entity_text) if entity_text else None
     skybox_urls = _resolve_skybox_urls(sky_name) if sky_name else None
     transparent_faces = _transparent_brush_face_indices(entity_text, model_ranges) if entity_text and model_ranges else set()
 
@@ -776,7 +715,6 @@ def _parse_bsp_geometry(bsp_path: str):
         "face_edges": face_edges,
         "faces": faces,
         "tex_infos": tex_infos,
-        "sky_lighting": sky_lighting,
         "skybox_urls": skybox_urls,
         "transparent_faces": transparent_faces,
     }
@@ -790,7 +728,6 @@ def _build_viewer_mesh_data(bsp_path: str):
     tex_infos = parsed["tex_infos"]
     faces = parsed["faces"]
     skybox_urls = parsed.get("skybox_urls")
-    sky_lighting = parsed.get("sky_lighting")
     transparent_faces: set[int] = parsed.get("transparent_faces", set())
 
     positions: list[float] = []
@@ -833,7 +770,7 @@ def _build_viewer_mesh_data(bsp_path: str):
         s = tex_info["s"]
         tv = tex_info["t"]
         for t in range(1, len(face_indices) - 1):
-            for vi in (v0, face_indices[t], face_indices[t + 1]):
+            for vi in (v0, face_indices[t + 1], face_indices[t]):
                 x, y, z = vertices[vi]
                 positions.extend((x, z, -y))
                 u = x * s[0] + y * s[1] + z * s[2] + s[3]
@@ -850,7 +787,6 @@ def _build_viewer_mesh_data(bsp_path: str):
         "uvs": uvs,
         "groups": groups,
         "materials": materials,
-        "sky_lighting": sky_lighting,
         "skybox_urls": skybox_urls,
     }
 
