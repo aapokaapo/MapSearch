@@ -1,8 +1,10 @@
+import asyncio
 import random
 from collections import deque
 
 import embedmaker
 import searcher
+from database import engine
 from db_io import find_map_name
 from models import Map, Tag
 from sqlalchemy import case
@@ -16,21 +18,27 @@ def _beta_sort_key():
     return case((_is_beta, 1), else_=0)
 
 
-async def print_map_search(keyword: str, session: Session, ctx) -> None:
-    """Search maps by keyword in path, message, or tags and send results."""
+def _search_map_paths(keyword: str) -> list[str]:
+    """Return matching map paths for a keyword search."""
     kw = f"%{keyword}%"
-    tag_map_ids = session.exec(
-        select(Tag.map_id).where(Tag.tag_name.like(kw))
-    ).all()
-    maps = session.exec(
-        select(Map).where(
-            Map.map_path.like(kw)
-            | Map.map_name.like(kw)
-            | Map.message.like(kw)
-            | Map.map_id.in_(tag_map_ids)
-        ).order_by(_beta_sort_key())
-    ).all()
-    rows = [m.map_path for m in maps]
+    with Session(engine) as session:
+        tag_map_ids = session.exec(
+            select(Tag.map_id).where(Tag.tag_name.like(kw))
+        ).all()
+        maps = session.exec(
+            select(Map).where(
+                Map.map_path.like(kw)
+                | Map.map_name.like(kw)
+                | Map.message.like(kw)
+                | Map.map_id.in_(tag_map_ids)
+            ).order_by(_beta_sort_key())
+        ).all()
+    return [m.map_path for m in maps]
+
+
+async def print_map_search(keyword: str, ctx) -> None:
+    """Search maps by keyword in path, message, or tags and send results."""
+    rows = await asyncio.to_thread(_search_map_paths, keyword)
     for embed in await searcher.map_search(keyword, rows):
         await send(ctx, embed=embed)
 
@@ -84,4 +92,3 @@ def _get_random_map(already_seen: deque, session: Session, prefix: str = None) -
     choice = random.choice(unseen)
     already_seen.append(choice)
     return choice
-
