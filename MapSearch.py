@@ -102,8 +102,7 @@ def _list_existing_bsp_map_rels() -> list[str]:
 @bot.slash_command(description="Search for maps by keyword (name, message or tag)")
 async def mapsearch(ctx: discord.ApplicationContext, keyword: str):
     await ctx.defer()
-    with Session(engine) as session:
-        await print_map_search(keyword, session, ctx)
+    await print_map_search(keyword, ctx)
 
 
 @bot.slash_command(description="Show info for a specific map, or a random map if none specified")
