@@ -584,7 +584,7 @@ def _decode_wal_to_png_bytes(wal_path: str) -> bytes:
     if len(wal_data) < _WAL_HEADER_SIZE:
         raise HTTPException(status_code=422, detail="Invalid WAL texture header")
 
-    _, width, height, off0, _, _, _, _, _, _ = struct.unpack_from("<32s6I32s3i", wal_data, 0)
+    _, width, height, off0, _, _, _, _, _, _, _ = struct.unpack_from("<32s6I32s3i", wal_data, 0)
     if width <= 0 or height <= 0 or width > _WAL_MAX_DIMENSION or height > _WAL_MAX_DIMENSION:
         raise HTTPException(status_code=422, detail="Invalid WAL texture dimensions")
 
