@@ -162,7 +162,7 @@ def list_maps(session: Session = Depends(get_session)):
 def search_maps(keyword: str, session: Session = Depends(get_session)):
     """Search maps by keyword matching name, path, message, or tag."""
     results = _search_maps_in_db(keyword, session)
-    if results or not _index_disk_search_matches(keyword, session):
+    if not _index_disk_search_matches(keyword, session):
         return results
     return _search_maps_in_db(keyword, session)
 
