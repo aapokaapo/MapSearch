@@ -3,7 +3,9 @@ import os
 import re
 import struct
 import sys
+import urllib.parse
 import zipfile
+from functools import lru_cache
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -408,6 +410,8 @@ _OBJ_UV_SCALE = 256.0  # default texel-to-UV divisor for OBJ export (no image si
 _TRANSPARENT_BRUSH_ENTITY_KEYS = ("classname", "targetname", "name")
 _TRANSPARENT_BRUSH_ENTITY_TOKENS = ("hill", "base")
 _TRANSPARENT_BRUSH_OPACITY = 0.4
+_WAL_HEADER_SIZE = 100
+_WAL_MAX_DIMENSION = 4096
 # Per-texture UV scale overrides for non-hr4 textures whose on-disk image is a different
 # size than the BSP UV coordinates assume.  Key is the base texture name (no path, no ext),
 # value is the float multiplier applied to map.repeat in the viewer (< 1 → texture tiles
@@ -555,6 +559,71 @@ def _effective_surface_opacity(flags: int, is_transparent_brush: bool) -> float:
     return opacity
 
 
+@lru_cache(maxsize=1)
+def _load_q2_palette() -> list[int]:
+    from PIL import Image
+    from config import pball_path
+
+    pball_root = os.path.realpath(pball_path.rstrip("/"))
+    colormap_path = os.path.realpath(os.path.join(pball_root, "pics", "colormap.pcx"))
+    if not colormap_path.startswith(pball_root + os.sep) or not os.path.isfile(colormap_path):
+        raise HTTPException(status_code=404, detail="Missing Quake2 colormap.pcx palette file")
+
+    with Image.open(colormap_path) as img:
+        palette = img.getpalette()
+    if not palette or len(palette) < 768:
+        raise HTTPException(status_code=422, detail="Invalid Quake2 palette in colormap.pcx")
+    return palette[:768]
+
+
+def _decode_wal_to_png_bytes(wal_path: str) -> bytes:
+    from PIL import Image
+
+    with open(wal_path, "rb") as f:
+        wal_data = f.read()
+    if len(wal_data) < _WAL_HEADER_SIZE:
+        raise HTTPException(status_code=422, detail="Invalid WAL texture header")
+
+    _, width, height, off0, _, _, _, _, _, _ = struct.unpack_from("<32s6I32s3i", wal_data, 0)
+    if width <= 0 or height <= 0 or width > _WAL_MAX_DIMENSION or height > _WAL_MAX_DIMENSION:
+        raise HTTPException(status_code=422, detail="Invalid WAL texture dimensions")
+
+    pixel_count = width * height
+    if off0 <= 0 or off0 + pixel_count > len(wal_data):
+        raise HTTPException(status_code=422, detail="Invalid WAL texture pixel data")
+
+    indices = wal_data[off0:off0 + pixel_count]
+    indexed = Image.frombytes("P", (width, height), indices)
+    indexed.putpalette(_load_q2_palette())
+
+    rgba = indexed.convert("RGBA")
+    if b"\xff" in indices:
+        alpha = indexed.point(lambda p: 0 if p == 255 else 255, mode="L")
+        rgba.putalpha(alpha)
+
+    buf = io.BytesIO()
+    rgba.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _resolve_wal_texture_url(texture_rel: str) -> str | None:
+    from config import pball_path
+
+    normalized = _normalize_map_ref(texture_rel)
+    if not normalized:
+        return None
+
+    pball_root = os.path.realpath(pball_path.rstrip("/"))
+    wal_path = os.path.realpath(os.path.join(pball_root, "textures", normalized + ".wal"))
+    if not wal_path.startswith(os.path.join(pball_root, "textures") + os.sep):
+        return None
+    if not os.path.isfile(wal_path):
+        return None
+
+    safe_rel = urllib.parse.quote(normalized, safe="/")
+    return f"/api/textures/{safe_rel}.png"
+
+
 def _resolve_texture_url(texture_name: str) -> tuple[str | None, int]:
     from config import pball_path
     pball_root = os.path.realpath(pball_path.rstrip("/"))
@@ -576,6 +645,10 @@ def _resolve_texture_url(texture_name: str) -> tuple[str | None, int]:
             continue
         if os.path.isfile(disk_path):
             return rel_url, uv_scale
+    wal_url = _resolve_wal_texture_url(tex_rel)
+    if wal_url:
+        default_scale = _TEXTURE_UV_SCALE_OVERRIDES.get(tex_base.lower(), 1)
+        return wal_url, default_scale
     return None, 1
 
 
@@ -753,6 +826,24 @@ def get_map_viewer_mesh(map_path: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="BSP file not found")
 
     return _build_viewer_mesh_data(bsp_file)
+
+
+@app.get("/api/textures/{texture_path:path}.png")
+def get_texture_png(texture_path: str):
+    from config import pball_path
+
+    normalized = _normalize_map_ref(texture_path)
+    if not normalized:
+        raise HTTPException(status_code=404, detail="Texture not found")
+
+    pball_root = os.path.realpath(pball_path.rstrip("/"))
+    textures_root = os.path.realpath(os.path.join(pball_root, "textures"))
+    wal_path = os.path.realpath(os.path.join(textures_root, normalized + ".wal"))
+    if not wal_path.startswith(textures_root + os.sep) or not os.path.isfile(wal_path):
+        raise HTTPException(status_code=404, detail="Texture not found")
+
+    png_bytes = _decode_wal_to_png_bytes(wal_path)
+    return Response(content=png_bytes, media_type="image/png")
 
 
 @app.get("/api/maps/{map_path:path}/image")
