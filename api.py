@@ -770,7 +770,7 @@ def _build_viewer_mesh_data(bsp_path: str):
         s = tex_info["s"]
         tv = tex_info["t"]
         for t in range(1, len(face_indices) - 1):
-            for vi in (v0, face_indices[t + 1], face_indices[t]):
+            for vi in (v0, face_indices[t], face_indices[t + 1]):
                 x, y, z = vertices[vi]
                 positions.extend((x, z, -y))
                 u = x * s[0] + y * s[1] + z * s[2] + s[3]
