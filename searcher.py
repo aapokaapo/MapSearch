@@ -17,6 +17,8 @@ async def map_search(keyword, input_maps):
             prefix = 'finished'
         if not 'finished' in maps.keys():
             maps['finished'] = ""
+        if prefix not in maps:
+            maps[prefix] = ""
         if os.path.exists(mapshot_path + current_map + '.jpg'):
             # discord markdown for clickable link
             maps[prefix] += f"[{current_map.split('/')[-1]}]({public_mapshot_path}{current_map}.jpg) "
