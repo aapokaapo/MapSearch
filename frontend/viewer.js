@@ -20,12 +20,17 @@ async function initViewer(base, mapPath) {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     renderer.setPixelRatio(devicePixelRatio);
     renderer.setClearColor(0x080a0f);
+    renderer.outputEncoding = THREE.sRGBEncoding;
 
     scene = new THREE.Scene();
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(1, 2, 1);
-    scene.add(dirLight);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+    scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x2d2218, 0.85));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    keyLight.position.set(1, 2, 1);
+    scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0xaec8ff, 0.35);
+    fillLight.position.set(-1.5, 1, -0.8);
+    scene.add(fillLight);
 
     camera = new THREE.PerspectiveCamera(60, 1, 1, 100000);
     camera.position.set(0, 500, 1500);
@@ -63,6 +68,15 @@ async function initViewer(base, mapPath) {
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const meshData = await resp.json();
+
+    const skyboxUrls = meshData.skybox_urls;
+    if (Array.isArray(skyboxUrls) && skyboxUrls.length === 6) {
+      const cubeMap = await loadCubeTexture(skyboxUrls.map((url) => `${base}${url}`));
+      if (cubeMap) {
+        scene.background = cubeMap;
+        scene.environment = cubeMap;
+      }
+    }
 
     loadMsg.textContent = "Parsing geometry…";
     const geo = buildGeometry(meshData);
@@ -120,6 +134,7 @@ async function buildMaterials(materialDefs, base) {
       const textureUrl = `${base}${def.texture_url}`;
       map = await loadTexture(textureLoader, textureUrl);
       if (map) {
+        map.encoding = THREE.sRGBEncoding;
         map.wrapS = THREE.RepeatWrapping;
         map.wrapT = THREE.RepeatWrapping;
         const w = map.image.width || 256;
@@ -146,6 +161,12 @@ async function buildMaterials(materialDefs, base) {
 function loadTexture(loader, url) {
   return new Promise((resolve) => {
     loader.load(url, resolve, undefined, () => resolve(null));
+  });
+}
+
+function loadCubeTexture(urls) {
+  return new Promise((resolve) => {
+    new THREE.CubeTextureLoader().load(urls, resolve, undefined, () => resolve(null));
   });
 }
 

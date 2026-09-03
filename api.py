@@ -3,7 +3,9 @@ import os
 import re
 import struct
 import sys
+import urllib.parse
 import zipfile
+from functools import lru_cache
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -403,7 +405,13 @@ _SURF_TRANS66 = 0x0020
 _SURF_NODRAW = 0x0080
 _CULLED_TEXTURE_NAMES = {"sky", "hint", "clip", "skip"}
 _BROWSER_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp")
+_BROWSER_SKYBOX_EXTS = ("png", "jpg", "jpeg", "webp")
 _OBJ_UV_SCALE = 256.0  # default texel-to-UV divisor for OBJ export (no image size available)
+_TRANSPARENT_BRUSH_ENTITY_KEYS = ("classname", "targetname", "name")
+_TRANSPARENT_BRUSH_ENTITY_TOKENS = ("hill", "base")
+_TRANSPARENT_BRUSH_OPACITY = 0.4
+_WAL_HEADER_SIZE = 100
+_WAL_MAX_DIMENSION = 4096
 # Per-texture UV scale overrides for non-hr4 textures whose on-disk image is a different
 # size than the BSP UV coordinates assume.  Key is the base texture name (no path, no ext),
 # value is the float multiplier applied to map.repeat in the viewer (< 1 → texture tiles
@@ -470,6 +478,152 @@ def _resolve_face_indices(
     return face_indices
 
 
+def _parse_entity_lump(entity_text: str) -> list[dict[str, str]]:
+    entities: list[dict[str, str]] = []
+    for block in re.finditer(r"\{(.*?)\}", entity_text, flags=re.DOTALL):
+        pairs = re.findall(r'"([^"]*)"\s*"([^"]*)"', block.group(1))
+        if pairs:
+            entities.append({k: v for k, v in pairs})
+    return entities
+
+
+def _extract_sky_name(entity_text: str) -> str | None:
+    for entity in _parse_entity_lump(entity_text):
+        sky = (entity.get("sky") or "").strip()
+        if sky:
+            return sky
+    return None
+
+
+def _resolve_skybox_urls(sky_name: str) -> list[str] | None:
+    from config import pball_path
+
+    pball_root = os.path.realpath(pball_path.rstrip("/"))
+    env_root = os.path.realpath(os.path.join(pball_root, "env"))
+    if not env_root.startswith(pball_root + os.sep) or not os.path.isdir(env_root):
+        return None
+
+    # Three.js CubeTextureLoader order: +X, -X, +Y, -Y, +Z, -Z
+    suffix_order = ("rt", "lf", "up", "dn", "ft", "bk")
+    sky_base = sky_name.strip("/").replace("\\", "/")
+    if not sky_base:
+        return None
+
+    urls: list[str] = []
+    for suffix in suffix_order:
+        selected_url = None
+        for ext in _BROWSER_SKYBOX_EXTS:
+            filename = f"{sky_base}{suffix}.{ext}"
+            disk_path = os.path.realpath(os.path.join(env_root, filename))
+            if not disk_path.startswith(env_root + os.sep):
+                continue
+            if os.path.isfile(disk_path):
+                selected_url = f"/pball/env/{filename}"
+                break
+        if not selected_url:
+            return None
+        urls.append(selected_url)
+    return urls
+
+
+def _transparent_brush_face_indices(
+    entity_text: str,
+    model_ranges: list[tuple[int, int]],
+) -> set[int]:
+    model_indices: set[int] = set()
+    for entity in _parse_entity_lump(entity_text):
+        model_ref = (entity.get("model") or "").strip()
+        if not (model_ref.startswith("*") and model_ref[1:].isdigit()):
+            continue
+        if any(
+            any(token in (entity.get(key) or "").lower() for token in _TRANSPARENT_BRUSH_ENTITY_TOKENS)
+            for key in _TRANSPARENT_BRUSH_ENTITY_KEYS
+        ):
+            model_indices.add(int(model_ref[1:]))
+
+    indices: set[int] = set()
+    for model_idx in model_indices:
+        if model_idx < 0 or model_idx >= len(model_ranges):
+            continue
+        first_face, num_faces = model_ranges[model_idx]
+        if first_face < 0 or num_faces <= 0:
+            continue
+        indices.update(range(first_face, first_face + num_faces))
+    return indices
+
+
+def _effective_surface_opacity(flags: int, is_transparent_brush: bool) -> float:
+    opacity = _surface_opacity(flags)
+    if is_transparent_brush:
+        return min(opacity, _TRANSPARENT_BRUSH_OPACITY)
+    return opacity
+
+
+@lru_cache(maxsize=1)
+def _load_q2_palette() -> list[int]:
+    from PIL import Image
+    from config import pball_path
+
+    pball_root = os.path.realpath(pball_path.rstrip("/"))
+    colormap_path = os.path.realpath(os.path.join(pball_root, "pics", "colormap.pcx"))
+    if not colormap_path.startswith(pball_root + os.sep) or not os.path.isfile(colormap_path):
+        raise HTTPException(status_code=404, detail="Missing Quake2 colormap.pcx palette file")
+
+    with Image.open(colormap_path) as img:
+        palette = img.getpalette()
+    if not palette or len(palette) < 768:
+        raise HTTPException(status_code=422, detail="Invalid Quake2 palette in colormap.pcx")
+    return palette[:768]
+
+
+def _decode_wal_to_png_bytes(wal_path: str) -> bytes:
+    from PIL import Image
+
+    with open(wal_path, "rb") as f:
+        wal_data = f.read()
+    if len(wal_data) < _WAL_HEADER_SIZE:
+        raise HTTPException(status_code=422, detail="Invalid WAL texture header")
+
+    _, width, height, off0, _, _, _, _, _, _, _ = struct.unpack_from("<32s6I32s3i", wal_data, 0)
+    if width <= 0 or height <= 0 or width > _WAL_MAX_DIMENSION or height > _WAL_MAX_DIMENSION:
+        raise HTTPException(status_code=422, detail="Invalid WAL texture dimensions")
+
+    pixel_count = width * height
+    if off0 <= 0 or off0 + pixel_count > len(wal_data):
+        raise HTTPException(status_code=422, detail="Invalid WAL texture pixel data")
+
+    indices = wal_data[off0:off0 + pixel_count]
+    indexed = Image.frombytes("P", (width, height), indices)
+    indexed.putpalette(_load_q2_palette())
+
+    rgba = indexed.convert("RGBA")
+    if b"\xff" in indices:
+        alpha = indexed.point(lambda p: 0 if p == 255 else 255, mode="L")
+        rgba.putalpha(alpha)
+
+    buf = io.BytesIO()
+    rgba.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _resolve_wal_texture_url(texture_rel: str) -> str | None:
+    from config import pball_path
+
+    normalized = _normalize_map_ref(texture_rel)
+    if not normalized:
+        return None
+
+    pball_root = os.path.realpath(pball_path.rstrip("/"))
+    wal_path = os.path.realpath(os.path.join(pball_root, "textures", normalized + ".wal"))
+    if not wal_path.startswith(os.path.join(pball_root, "textures") + os.sep):
+        return None
+    if not os.path.isfile(wal_path):
+        return None
+
+    safe_rel = urllib.parse.quote(normalized, safe="/")
+    return f"/api/textures/{safe_rel}.png"
+
+
 def _resolve_texture_url(texture_name: str) -> tuple[str | None, int]:
     from config import pball_path
     pball_root = os.path.realpath(pball_path.rstrip("/"))
@@ -491,6 +645,10 @@ def _resolve_texture_url(texture_name: str) -> tuple[str | None, int]:
             continue
         if os.path.isfile(disk_path):
             return rel_url, uv_scale
+    wal_url = _resolve_wal_texture_url(tex_rel)
+    if wal_url:
+        default_scale = _TEXTURE_UV_SCALE_OVERRIDES.get(tex_base.lower(), 1)
+        return wal_url, default_scale
     return None, 1
 
 
@@ -505,10 +663,12 @@ def _parse_bsp_geometry(bsp_path: str):
     face_edge_off, face_edge_len = _bsp_lump(data, 12)
     face_off, face_len = _bsp_lump(data, 6)
     tex_off, tex_len = _bsp_lump(data, 5)
+    model_off, model_len = _bsp_lump(data, 13)
+    entity_off, entity_len = _bsp_lump(data, 0)
 
     if not all((vert_len, edge_len, face_edge_len, face_len, tex_len)):
         raise HTTPException(status_code=422, detail="Missing BSP geometry lumps")
-    if vert_len % 12 or edge_len % 4 or face_edge_len % 4 or face_len % 20 or tex_len % 76:
+    if vert_len % 12 or edge_len % 4 or face_edge_len % 4 or face_len % 20 or tex_len % 76 or (model_len and model_len % 48):
         raise HTTPException(status_code=422, detail="Corrupt BSP lump sizes")
 
     vertices = [struct.unpack_from("<fff", data, vert_off + i * 12) for i in range(vert_len // 12)]
@@ -534,12 +694,29 @@ def _parse_bsp_geometry(bsp_path: str):
         _, _, first_edge, num_edges, texinfo_idx, _, _ = struct.unpack_from("<HhiHh4si", data, base)
         faces.append((first_edge, num_edges, texinfo_idx))
 
+    model_ranges: list[tuple[int, int]] = []
+    if model_len:
+        for i in range(model_len // 48):
+            base = model_off + i * 48
+            vals = struct.unpack_from("<9f3i", data, base)
+            model_ranges.append((vals[10], vals[11]))
+
+    entity_text = ""
+    if entity_len:
+        entity_text = data[entity_off:entity_off + entity_len].decode("cp1252", "ignore").rstrip("\x00")
+
+    sky_name = _extract_sky_name(entity_text) if entity_text else None
+    skybox_urls = _resolve_skybox_urls(sky_name) if sky_name else None
+    transparent_faces = _transparent_brush_face_indices(entity_text, model_ranges) if entity_text and model_ranges else set()
+
     return {
         "vertices": vertices,
         "edges": edges,
         "face_edges": face_edges,
         "faces": faces,
         "tex_infos": tex_infos,
+        "skybox_urls": skybox_urls,
+        "transparent_faces": transparent_faces,
     }
 
 
@@ -550,6 +727,8 @@ def _build_viewer_mesh_data(bsp_path: str):
     face_edges = parsed["face_edges"]
     tex_infos = parsed["tex_infos"]
     faces = parsed["faces"]
+    skybox_urls = parsed.get("skybox_urls")
+    transparent_faces: set[int] = parsed.get("transparent_faces", set())
 
     positions: list[float] = []
     uvs: list[float] = []
@@ -570,7 +749,7 @@ def _build_viewer_mesh_data(bsp_path: str):
         materials.append({"name": texture_name, "texture_url": texture_url, "uv_scale": uv_scale, "opacity": opacity})
         return idx
 
-    for first_edge, num_edges, texinfo_idx in faces:
+    for face_idx, (first_edge, num_edges, texinfo_idx) in enumerate(faces):
         if num_edges < 3 or texinfo_idx < 0 or texinfo_idx >= len(tex_infos):
             continue
         tex_info = tex_infos[texinfo_idx]
@@ -581,7 +760,7 @@ def _build_viewer_mesh_data(bsp_path: str):
         if face_indices is None:
             continue
 
-        opacity = _surface_opacity(tex_info["flags"])
+        opacity = _effective_surface_opacity(tex_info["flags"], face_idx in transparent_faces)
         material_index = _material_index(texture_name, opacity)
         if current_group is None or current_group["material_index"] != material_index:
             current_group = {"start": vertex_cursor, "count": 0, "material_index": material_index}
@@ -608,6 +787,7 @@ def _build_viewer_mesh_data(bsp_path: str):
         "uvs": uvs,
         "groups": groups,
         "materials": materials,
+        "skybox_urls": skybox_urls,
     }
 
 
@@ -646,6 +826,24 @@ def get_map_viewer_mesh(map_path: str, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="BSP file not found")
 
     return _build_viewer_mesh_data(bsp_file)
+
+
+@app.get("/api/textures/{texture_path:path}.png")
+def get_texture_png(texture_path: str):
+    from config import pball_path
+
+    normalized = _normalize_map_ref(texture_path)
+    if not normalized:
+        raise HTTPException(status_code=404, detail="Texture not found")
+
+    pball_root = os.path.realpath(pball_path.rstrip("/"))
+    textures_root = os.path.realpath(os.path.join(pball_root, "textures"))
+    wal_path = os.path.realpath(os.path.join(textures_root, normalized + ".wal"))
+    if not wal_path.startswith(textures_root + os.sep) or not os.path.isfile(wal_path):
+        raise HTTPException(status_code=404, detail="Texture not found")
+
+    png_bytes = _decode_wal_to_png_bytes(wal_path)
+    return Response(content=png_bytes, media_type="image/png")
 
 
 @app.get("/api/maps/{map_path:path}/image")
@@ -797,12 +995,15 @@ _MAPSHOTS_DIR = _MAPSHOTS_DIR.rstrip("/")
 _TOPSHOTS_DIR = _TOPSHOTS_DIR.rstrip("/")
 _PBALL_DIR = _PBALL_DIR.rstrip("/")
 _PBALL_TEXTURES_DIR = os.path.join(_PBALL_DIR, "textures")
+_PBALL_ENV_DIR = os.path.join(_PBALL_DIR, "env")
 if os.path.isdir(_MAPSHOTS_DIR):
     app.mount("/mapshots", StaticFiles(directory=_MAPSHOTS_DIR), name="mapshots")
 if os.path.isdir(_TOPSHOTS_DIR):
     app.mount("/topshots", StaticFiles(directory=_TOPSHOTS_DIR), name="topshots")
 if os.path.isdir(_PBALL_TEXTURES_DIR):
     app.mount("/pball/textures", StaticFiles(directory=_PBALL_TEXTURES_DIR), name="pball_textures")
+if os.path.isdir(_PBALL_ENV_DIR):
+    app.mount("/pball/env", StaticFiles(directory=_PBALL_ENV_DIR), name="pball_env")
 
 # Serve the frontend after API routes so it does not shadow `/api/*`.
 _FRONTEND_DIR = os.path.join(_BASE_DIR, "frontend")
