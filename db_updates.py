@@ -186,95 +186,6 @@ def _ts_resolve_face_indices(
     return idxs if len(idxs) >= 3 else None
 
 
-def _ts_projected_plane_coeffs(
-    projected_vertices: list[tuple[float, float, float]]
-) -> tuple[float, float, float] | None:
-    """
-    Return coefficients for z = ax + by + c in projected top-down space.
-
-    Faces that are vertical (or otherwise degenerate in top-down projection)
-    cannot be expressed this way and return None.
-    """
-    if len(projected_vertices) < 3:
-        return None
-
-    p0 = projected_vertices[0]
-    for i in range(1, len(projected_vertices) - 1):
-        p1 = projected_vertices[i]
-        p2 = projected_vertices[i + 1]
-
-        ux, uy, uz = p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]
-        vx, vy, vz = p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]
-        nx = uy * vz - uz * vy
-        ny = uz * vx - ux * vz
-        nz = ux * vy - uy * vx
-        if abs(nz) > 1e-6:
-            a = -nx / nz
-            b = -ny / nz
-            c = p0[2] - a * p0[0] - b * p0[1]
-            return (a, b, c)
-
-    return None
-
-
-def _ts_draw_height_shaded_polygon(
-    img,
-    poly_px: list[tuple[float, float]],
-    avg_z: float,
-    opacity: float,
-    min_z: float,
-    z_range: float,
-    plane_coeffs: tuple[float, float, float] | None,
-    min_x: float,
-    min_y: float,
-    scale: float,
-) -> None:
-    from PIL import Image, ImageDraw
-
-    if len(poly_px) < 3:
-        return
-
-    x_coords = [pt[0] for pt in poly_px]
-    y_coords = [pt[1] for pt in poly_px]
-    x0 = max(0, int(min(x_coords)))
-    y0 = max(0, int(min(y_coords)))
-    x1 = min(img.width, int(max(x_coords) + 1.0))
-    y1 = min(img.height, int(max(y_coords) + 1.0))
-    if x1 <= x0 or y1 <= y0:
-        return
-
-    local_poly = [(px - x0, py - y0) for px, py in poly_px]
-    mask = Image.new("L", (x1 - x0, y1 - y0), 0)
-    ImageDraw.Draw(mask).polygon(local_poly, fill=255)
-    mask_data = list(mask.getdata())
-    if not any(mask_data):
-        return
-
-    shade_values: list[int] = []
-    if plane_coeffs is None:
-        t = max(0.0, min(1.0, (avg_z - min_z) / z_range))
-        shade = int(60 + 170 * t)
-        shade_values = [shade] * (mask.width * mask.height)
-    else:
-        a, b, c = plane_coeffs
-        for py in range(mask.height):
-            sy = min_y + (y0 + py + 0.5) / scale
-            for px in range(mask.width):
-                sx = min_x + (x0 + px + 0.5) / scale
-                z = a * sx + b * sy + c
-                t = max(0.0, min(1.0, (z - min_z) / z_range))
-                shade_values.append(int(60 + 170 * t))
-
-    alpha = int(255 * opacity)
-    tile_data = [
-        (shade, shade, shade, alpha if mask_alpha else 0)
-        for shade, mask_alpha in zip(shade_values, mask_data)
-    ]
-    tile = Image.new("RGBA", (mask.width, mask.height))
-    tile.putdata(tile_data)
-    img.alpha_composite(tile, dest=(x0, y0))
-
-
 def _ts_parse_bsp(bsp_path: str) -> dict:
     import struct
     with open(bsp_path, "rb") as f:
@@ -322,11 +233,10 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     are culled via the 2-D signed area of their projection (FrontSide); transparent
     surfaces are rendered from both sides (DoubleSide).  Painter's algorithm
     (back-to-front by Z elevation) handles depth ordering.  Each polygon is
-    filled with grey height shading derived from its elevation (dark = low,
-    light = high), using a smooth per-pixel gradient on sloped faces when
-    possible.  Returns a PIL RGBA image.
+    filled with a solid grey shade derived from its elevation (dark = low,
+    light = high).  Returns a PIL RGBA image.
     """
-    from PIL import Image
+    from PIL import Image, ImageDraw
 
     parsed = _ts_parse_bsp(bsp_path)
     vertices = parsed["vertices"]
@@ -338,10 +248,7 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     # Collect all visible polygons with their screen-space data.
     # Top-down projection: screen_x = BSP_x, screen_y = -BSP_y, depth = BSP_z
     # (negating Y so the image Y axis increases downward as in screen space).
-    polys: list[tuple] = []  # (avg_z, screen_pts, opacity, plane_coeffs)
-    fallback_polys: list[tuple] = []
-    polys_z_values: list[float] = []
-    fallback_z_values: list[float] = []
+    polys: list[tuple] = []  # (avg_z, screen_pts, opacity)
 
     for first_edge, num_edges, texinfo_idx in faces:
         if num_edges < 3 or texinfo_idx < 0 or texinfo_idx >= len(tex_infos):
@@ -360,20 +267,16 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
         sx_list = []
         sy_list = []
         z_list = []
-        projected_vertices = []
         for vi in face_indices:
             bx, by, bz = vertices[vi]
             sx_list.append(bx)
             sy_list.append(-by)
             z_list.append(bz)
-            projected_vertices.append((bx, -by, bz))
 
         # Back-face culling via 2-D signed area (Shoelace formula).
-        # The projection is (BSP_x, -BSP_y), so the Y negation flips winding:
-        # front-facing polygons wind clockwise in screen space and therefore
-        # produce a negative signed area here. Positive area means the face is
-        # back-facing in the top-down view; zero-area projections are kept so
-        # nearly-vertical slopes do not disappear.
+        # The projection is (BSP_x, -BSP_y), so a positive signed area means
+        # the polygon winds CCW in screen space, i.e. it faces the camera
+        # looking straight down.  A negative (or zero) area means back-facing.
         # Opaque surfaces: cull back-faces (FrontSide), matching the 3D viewer.
         # Transparent surfaces: render from both sides (DoubleSide).
         n = len(sx_list)
@@ -382,32 +285,20 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
             j = (i + 1) % n
             signed_area += sx_list[i] * sy_list[j] - sx_list[j] * sy_list[i]
 
-        avg_z = sum(z_list) / len(z_list)
-        screen_pts = list(zip(sx_list, sy_list))
-        plane_coeffs = _ts_projected_plane_coeffs(projected_vertices)
-        fallback_polys.append((avg_z, screen_pts, opacity, plane_coeffs))
-        fallback_z_values.extend(z_list)
-
-        if signed_area > 0:
+        if signed_area <= 0:
             if opacity >= 1.0:
                 continue  # back-facing opaque surface — cull it
 
-        polys.append((avg_z, screen_pts, opacity, plane_coeffs))
-        polys_z_values.extend(z_list)
-
-    if not polys:
-        # Some maps (for example pyramid interiors) can end up entirely
-        # back-facing from a strict top-down test. Fall back to drawing all
-        # non-culled surfaces instead of returning a blank image.
-        polys = fallback_polys
-        polys_z_values = fallback_z_values
+        avg_z = sum(z_list) / len(z_list)
+        screen_pts = list(zip(sx_list, sy_list))
+        polys.append((avg_z, screen_pts, opacity))
     if not polys:
         return Image.new("RGBA", (max_resolution, max_resolution), (255, 255, 255, 255))
 
     # Compute world bounding box.
-    all_sx = [pt[0] for _, pts, _, _ in polys for pt in pts]
-    all_sy = [pt[1] for _, pts, _, _ in polys for pt in pts]
-    all_z = polys_z_values
+    all_sx = [pt[0] for _, pts, _ in polys for pt in pts]
+    all_sy = [pt[1] for _, pts, _ in polys for pt in pts]
+    all_z  = [z    for z, _, _   in polys]
 
     min_x, max_x = min(all_sx), max(all_sx)
     min_y, max_y = min(all_sy), max(all_sy)
@@ -429,21 +320,17 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     polys.sort(key=lambda p: p[0])
 
     img = Image.new("RGBA", (img_w, img_h), (255, 255, 255, 255))
+    draw = ImageDraw.Draw(img, "RGBA")
 
-    for avg_z, screen_pts, opacity, plane_coeffs in polys:
+    for avg_z, screen_pts, opacity in polys:
+        # Map elevation to a grey shade: low elevation = dark, high = light.
+        t = (avg_z - min_z) / z_range          # 0.0 … 1.0
+        shade = int(60 + 170 * t)               # 60 (dark) … 230 (light)
+        alpha = int(255 * opacity)
+        color = (shade, shade, shade, alpha)
         poly_px = [to_px(sx, sy) for sx, sy in screen_pts]
-        _ts_draw_height_shaded_polygon(
-            img=img,
-            poly_px=poly_px,
-            avg_z=avg_z,
-            opacity=opacity,
-            min_z=min_z,
-            z_range=z_range,
-            plane_coeffs=plane_coeffs,
-            min_x=min_x,
-            min_y=min_y,
-            scale=scale,
-        )
+        if len(poly_px) >= 3:
+            draw.polygon(poly_px, fill=color)
 
     return img
 
