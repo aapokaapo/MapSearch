@@ -232,9 +232,11 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     the 3D viewer (sky, nodraw, hint, clip, skip).  Back-facing opaque surfaces
     are culled via the 2-D signed area of their projection (FrontSide); transparent
     surfaces are rendered from both sides (DoubleSide).  Painter's algorithm
-    (back-to-front by Z elevation) handles depth ordering.  Each polygon is
-    filled with a solid grey shade derived from its elevation (dark = low,
-    light = high).  Returns a PIL RGBA image.
+    (back-to-front by Z elevation) handles depth ordering.  Polygon color is
+    slope-aware: for non-degenerate XY projections, height is evaluated per
+    pixel from the polygon plane to create a smooth grey gradient (dark = low,
+    light = high).  Degenerate projections fall back to average-Z shading.
+    Returns a PIL RGBA image.
     """
     from PIL import Image, ImageDraw
 
@@ -248,7 +250,7 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     # Collect all visible polygons with their screen-space data.
     # Top-down projection: screen_x = BSP_x, screen_y = -BSP_y, depth = BSP_z
     # (negating Y so the image Y axis increases downward as in screen space).
-    polys: list[tuple] = []  # (avg_z, screen_pts, opacity)
+    polys: list[tuple] = []  # (avg_z, screen_pts, screen_pts_z, opacity)
 
     for first_edge, num_edges, texinfo_idx in faces:
         if num_edges < 3 or texinfo_idx < 0 or texinfo_idx >= len(tex_infos):
@@ -291,14 +293,15 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
 
         avg_z = sum(z_list) / len(z_list)
         screen_pts = list(zip(sx_list, sy_list))
-        polys.append((avg_z, screen_pts, opacity))
+        screen_pts_z = list(zip(sx_list, sy_list, z_list))
+        polys.append((avg_z, screen_pts, screen_pts_z, opacity))
     if not polys:
         return Image.new("RGBA", (max_resolution, max_resolution), (255, 255, 255, 255))
 
     # Compute world bounding box.
-    all_sx = [pt[0] for _, pts, _ in polys for pt in pts]
-    all_sy = [pt[1] for _, pts, _ in polys for pt in pts]
-    all_z  = [z    for z, _, _   in polys]
+    all_sx = [pt[0] for _, pts, _, _ in polys for pt in pts]
+    all_sy = [pt[1] for _, pts, _, _ in polys for pt in pts]
+    all_z  = [z    for z, _, _, _   in polys]
 
     min_x, max_x = min(all_sx), max(all_sx)
     min_y, max_y = min(all_sy), max(all_sy)
@@ -322,15 +325,73 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     img = Image.new("RGBA", (img_w, img_h), (255, 255, 255, 255))
     draw = ImageDraw.Draw(img, "RGBA")
 
-    for avg_z, screen_pts, opacity in polys:
-        # Map elevation to a grey shade: low elevation = dark, high = light.
-        t = (avg_z - min_z) / z_range          # 0.0 … 1.0
-        shade = int(60 + 170 * t)               # 60 (dark) … 230 (light)
+    def _fit_plane_z(points: list[tuple[float, float, float]]) -> tuple[float, float, float] | None:
+        # Solve z = a*x + b*y + c from any non-collinear triplet in projected XY.
+        n = len(points)
+        for i in range(n - 2):
+            x1, y1, z1 = points[i]
+            for j in range(i + 1, n - 1):
+                x2, y2, z2 = points[j]
+                for k in range(j + 1, n):
+                    x3, y3, z3 = points[k]
+                    det = x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)
+                    if abs(det) < 1e-9:
+                        continue
+                    a = (z1 * (y2 - y3) + z2 * (y3 - y1) + z3 * (y1 - y2)) / det
+                    b = (z1 * (x3 - x2) + z2 * (x1 - x3) + z3 * (x2 - x1)) / det
+                    c = (
+                        z1 * (x2 * y3 - x3 * y2)
+                        + z2 * (x3 * y1 - x1 * y3)
+                        + z3 * (x1 * y2 - x2 * y1)
+                    ) / det
+                    return a, b, c
+        return None
+
+    for avg_z, screen_pts, screen_pts_z, opacity in polys:
         alpha = int(255 * opacity)
-        color = (shade, shade, shade, alpha)
         poly_px = [to_px(sx, sy) for sx, sy in screen_pts]
-        if len(poly_px) >= 3:
-            draw.polygon(poly_px, fill=color)
+        if len(poly_px) < 3:
+            continue
+
+        plane = _fit_plane_z(screen_pts_z)
+        if plane is None:
+            # Degenerate top-down projection (near-vertical in XY): fallback to avg Z.
+            t = (avg_z - min_z) / z_range
+            t = max(0.0, min(1.0, t))
+            shade = int(60 + 170 * t)
+            draw.polygon(poly_px, fill=(shade, shade, shade, alpha))
+            continue
+
+        min_px = max(0, int(min(x for x, _ in poly_px)))
+        max_px = min(img_w - 1, int(max(x for x, _ in poly_px) + 1))
+        min_py = max(0, int(min(y for _, y in poly_px)))
+        max_py = min(img_h - 1, int(max(y for _, y in poly_px) + 1))
+        if min_px > max_px or min_py > max_py:
+            continue
+
+        local_w = max_px - min_px + 1
+        local_h = max_py - min_py + 1
+        local_poly = [(x - min_px, y - min_py) for x, y in poly_px]
+
+        mask = Image.new("L", (local_w, local_h), 0)
+        ImageDraw.Draw(mask).polygon(local_poly, fill=255)
+        mask_px = mask.load()
+
+        tile = Image.new("RGBA", (local_w, local_h), (0, 0, 0, 0))
+        tile_px = tile.load()
+        a, b, c = plane
+        for py in range(local_h):
+            sy = (min_py + py) / scale + min_y
+            for px in range(local_w):
+                if mask_px[px, py] == 0:
+                    continue
+                sx = (min_px + px) / scale + min_x
+                z = a * sx + b * sy + c
+                t = (z - min_z) / z_range
+                t = max(0.0, min(1.0, t))
+                shade = int(60 + 170 * t)
+                tile_px[px, py] = (shade, shade, shade, alpha)
+        img.alpha_composite(tile, dest=(min_px, min_py))
 
     return img
 
@@ -338,8 +399,9 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
 def generate_topshot(map_rel: str) -> None:
     """
     Generate a top-down overview image for the given map and save it to
-    topshot_path.  Uses BSP culling (sky, nodraw, hint, clip, skip) and a
-    height-based grey shading with painter's algorithm for depth ordering.
+    topshot_path.  Uses BSP culling (sky, nodraw, hint, clip, skip) and
+    slope-aware height-based grey shading with painter's algorithm for depth
+    ordering.
     """
     normalized_map_rel = _normalize_map_rel(map_rel)
     bsp_path = _safe_join_under_root(map_path, normalized_map_rel, ".bsp")
