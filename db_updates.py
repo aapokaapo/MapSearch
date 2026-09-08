@@ -339,6 +339,9 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     # Top-down projection: screen_x = BSP_x, screen_y = -BSP_y, depth = BSP_z
     # (negating Y so the image Y axis increases downward as in screen space).
     polys: list[tuple] = []  # (avg_z, screen_pts, opacity, plane_coeffs)
+    fallback_polys: list[tuple] = []
+    polys_z_values: list[float] = []
+    fallback_z_values: list[float] = []
 
     for first_edge, num_edges, texinfo_idx in faces:
         if num_edges < 3 or texinfo_idx < 0 or texinfo_idx >= len(tex_infos):
@@ -368,8 +371,9 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
         # Back-face culling via 2-D signed area (Shoelace formula).
         # The projection is (BSP_x, -BSP_y), so the Y negation flips winding:
         # front-facing polygons wind clockwise in screen space and therefore
-        # produce a negative signed area here.  Positive (or zero) area means
-        # the face is back-facing in the top-down view.
+        # produce a negative signed area here. Positive area means the face is
+        # back-facing in the top-down view; zero-area projections are kept so
+        # nearly-vertical slopes do not disappear.
         # Opaque surfaces: cull back-faces (FrontSide), matching the 3D viewer.
         # Transparent surfaces: render from both sides (DoubleSide).
         n = len(sx_list)
@@ -378,22 +382,32 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
             j = (i + 1) % n
             signed_area += sx_list[i] * sy_list[j] - sx_list[j] * sy_list[i]
 
-        if signed_area >= 0:
-            if opacity >= 1.0:
-                continue  # back-facing opaque surface — cull it
-
         avg_z = sum(z_list) / len(z_list)
         screen_pts = list(zip(sx_list, sy_list))
         plane_coeffs = _ts_projected_plane_coeffs(projected_vertices)
-        polys.append((avg_z, screen_pts, opacity, plane_coeffs))
+        fallback_polys.append((avg_z, screen_pts, opacity, plane_coeffs))
+        fallback_z_values.extend(z_list)
 
+        if signed_area > 0:
+            if opacity >= 1.0:
+                continue  # back-facing opaque surface — cull it
+
+        polys.append((avg_z, screen_pts, opacity, plane_coeffs))
+        polys_z_values.extend(z_list)
+
+    if not polys:
+        # Some maps (for example pyramid interiors) can end up entirely
+        # back-facing from a strict top-down test. Fall back to drawing all
+        # non-culled surfaces instead of returning a blank image.
+        polys = fallback_polys
+        polys_z_values = fallback_z_values
     if not polys:
         return Image.new("RGBA", (max_resolution, max_resolution), (255, 255, 255, 255))
 
     # Compute world bounding box.
     all_sx = [pt[0] for _, pts, _, _ in polys for pt in pts]
     all_sy = [pt[1] for _, pts, _, _ in polys for pt in pts]
-    all_z  = [z    for z, _, _, _   in polys]
+    all_z = polys_z_values
 
     min_x, max_x = min(all_sx), max(all_sx)
     min_y, max_y = min(all_sy), max(all_sy)
