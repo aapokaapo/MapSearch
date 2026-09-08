@@ -366,9 +366,10 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
             projected_vertices.append((bx, -by, bz))
 
         # Back-face culling via 2-D signed area (Shoelace formula).
-        # The projection is (BSP_x, -BSP_y), so a positive signed area means
-        # the polygon winds CCW in screen space, i.e. it faces the camera
-        # looking straight down.  A negative (or zero) area means back-facing.
+        # The projection is (BSP_x, -BSP_y), so the Y negation flips winding:
+        # front-facing polygons wind clockwise in screen space and therefore
+        # produce a negative signed area here.  Positive (or zero) area means
+        # the face is back-facing in the top-down view.
         # Opaque surfaces: cull back-faces (FrontSide), matching the 3D viewer.
         # Transparent surfaces: render from both sides (DoubleSide).
         n = len(sx_list)
@@ -377,7 +378,7 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
             j = (i + 1) % n
             signed_area += sx_list[i] * sy_list[j] - sx_list[j] * sy_list[i]
 
-        if signed_area <= 0:
+        if signed_area >= 0:
             if opacity >= 1.0:
                 continue  # back-facing opaque surface — cull it
 
