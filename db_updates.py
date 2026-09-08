@@ -339,6 +339,7 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     # Top-down projection: screen_x = BSP_x, screen_y = -BSP_y, depth = BSP_z
     # (negating Y so the image Y axis increases downward as in screen space).
     polys: list[tuple] = []  # (avg_z, screen_pts, opacity, plane_coeffs)
+    fallback_polys: list[tuple] = []
 
     for first_edge, num_edges, texinfo_idx in faces:
         if num_edges < 3 or texinfo_idx < 0 or texinfo_idx >= len(tex_infos):
@@ -378,15 +379,22 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
             j = (i + 1) % n
             signed_area += sx_list[i] * sy_list[j] - sx_list[j] * sy_list[i]
 
-        if signed_area >= 0:
-            if opacity >= 1.0:
-                continue  # back-facing opaque surface — cull it
-
         avg_z = sum(z_list) / len(z_list)
         screen_pts = list(zip(sx_list, sy_list))
         plane_coeffs = _ts_projected_plane_coeffs(projected_vertices)
+        fallback_polys.append((avg_z, screen_pts, opacity, plane_coeffs))
+
+        if signed_area > 0:
+            if opacity >= 1.0:
+                continue  # back-facing opaque surface — cull it
+
         polys.append((avg_z, screen_pts, opacity, plane_coeffs))
 
+    if not polys:
+        # Some maps (for example pyramid interiors) can end up entirely
+        # back-facing from a strict top-down test. Fall back to drawing all
+        # non-culled surfaces instead of returning a blank image.
+        polys = fallback_polys
     if not polys:
         return Image.new("RGBA", (max_resolution, max_resolution), (255, 255, 255, 255))
 
