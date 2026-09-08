@@ -13,7 +13,8 @@ from database import engine
 from db_io import find_map_name
 from db_queries import print_map_search, print_map_info
 from db_updates import add_map_to_db, request_topshot_via_api, add_tag, remove_tag
-from sqlmodel import Session
+from models import Map, Tag
+from sqlmodel import Session, delete
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bsp_hacking"))
 
@@ -474,6 +475,51 @@ async def regenerate_topshot(
             fail_preview += "; …"
         lines.append(f"⚠️ Failed ({len(topshot_fail)}): {fail_preview}")
 
+    await ctx.respond("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Database management commands (administrator only)
+# ---------------------------------------------------------------------------
+
+@bot.slash_command(
+    description="Regenerate the map database from BSP files (admin only)",
+    default_member_permissions=discord.Permissions(administrator=True),
+)
+async def regenerate_database(ctx: discord.ApplicationContext):
+    await ctx.defer()
+
+    target_maps = _list_existing_bsp_map_rels()
+    if not target_maps:
+        await ctx.respond("Error: No BSP files were found.")
+        return
+
+    def _rebuild_database() -> tuple[int, list[str]]:
+        failures: list[str] = []
+        indexed_count = 0
+        with Session(engine) as session:
+            session.exec(delete(Tag))
+            session.exec(delete(Map))
+            session.commit()
+            for map_rel in target_maps:
+                try:
+                    add_map_to_db(map_rel, session)
+                    indexed_count += 1
+                except Exception as e:
+                    failures.append(f"`{map_rel}` ({e})")
+        return indexed_count, failures
+
+    indexed_count, failures = await asyncio.to_thread(_rebuild_database)
+    lines = [
+        f"🗄️ Database regeneration attempted for {len(target_maps)} map(s).",
+        f"✅ Indexed ({indexed_count}).",
+        "⚠️ Existing tags were removed during regeneration.",
+    ]
+    if failures:
+        preview = "; ".join(failures[:10])
+        if len(failures) > 10:
+            preview += "; …"
+        lines.append(f"⚠️ Failed ({len(failures)}): {preview}")
     await ctx.respond("\n".join(lines))
 
 
