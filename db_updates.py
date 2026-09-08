@@ -238,6 +238,7 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     light = high).  Degenerate projections fall back to average-Z shading.
     Returns a PIL RGBA image.
     """
+    import math
     from PIL import Image, ImageDraw
 
     parsed = _ts_parse_bsp(bsp_path)
@@ -326,8 +327,10 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     draw = ImageDraw.Draw(img, "RGBA")
 
     def _fit_plane_z(points: list[tuple[float, float, float]]) -> tuple[float, float, float] | None:
-        # Solve z = a*x + b*y + c from any non-collinear triplet in projected XY.
+        # Solve z = a*x + b*y + c from the most numerically stable non-collinear triplet in projected XY.
         n = len(points)
+        best: tuple[float, float, float] | None = None
+        best_det_abs = 0.0
         for i in range(n - 2):
             x1, y1, z1 = points[i]
             for j in range(i + 1, n - 1):
@@ -344,8 +347,21 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
                         + z2 * (x3 * y1 - x1 * y3)
                         + z3 * (x1 * y2 - x2 * y1)
                     ) / det
-                    return a, b, c
-        return None
+                    det_abs = abs(det)
+                    if det_abs > best_det_abs:
+                        best_det_abs = det_abs
+                        best = (a, b, c)
+        if best is None:
+            return None
+
+        # Guard against noisy/non-planar inputs that can create extreme artifacts.
+        a, b, c = best
+        zs = [z for _, _, z in points]
+        z_span = max(zs) - min(zs) if zs else 0.0
+        max_residual = max(abs((a * x + b * y + c) - z) for x, y, z in points)
+        if max_residual > max(0.1, z_span * 1e-3):
+            return None
+        return best
 
     for avg_z, screen_pts, screen_pts_z, opacity in polys:
         alpha = int(255 * opacity)
@@ -362,10 +378,10 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
             draw.polygon(poly_px, fill=(shade, shade, shade, alpha))
             continue
 
-        min_px = max(0, int(min(x for x, _ in poly_px)))
-        max_px = min(img_w - 1, int(max(x for x, _ in poly_px) + 1))
-        min_py = max(0, int(min(y for _, y in poly_px)))
-        max_py = min(img_h - 1, int(max(y for _, y in poly_px) + 1))
+        min_px = max(0, math.floor(min(x for x, _ in poly_px)))
+        max_px = min(img_w - 1, math.ceil(max(x for x, _ in poly_px)))
+        min_py = max(0, math.floor(min(y for _, y in poly_px)))
+        max_py = min(img_h - 1, math.ceil(max(y for _, y in poly_px)))
         if min_px > max_px or min_py > max_py:
             continue
 
@@ -381,11 +397,11 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
         tile_px = tile.load()
         a, b, c = plane
         for py in range(local_h):
-            sy = (min_py + py) / scale + min_y
+            sy = (min_py + py + 0.5) / scale + min_y
             for px in range(local_w):
                 if mask_px[px, py] == 0:
                     continue
-                sx = (min_px + px) / scale + min_x
+                sx = (min_px + px + 0.5) / scale + min_x
                 z = a * sx + b * sy + c
                 t = (z - min_z) / z_range
                 t = max(0.0, min(1.0, t))
