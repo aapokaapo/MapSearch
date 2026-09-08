@@ -22,6 +22,7 @@ Discord bot and web application for Digital Paintball 2 map discovery and metada
 ### Admins
 - `/upload_map file [subfolder] [map_name]` — upload a `.bsp`, `.zip`, or `.jpg`/`.jpeg` mapshot file
 - `/regenerate_topshot [map_name] [all_maps]` — regenerate a topshot for one map or for every map
+- `/regenerate_database` — rebuild the map database from all BSP files
 - `/updatefiles` — update which required files are provided by the server
 - `/reloadmaps` — sync the map database with the file system
 - `/reloadrequirements [map]` — reload the requirements table (optionally for one map)
