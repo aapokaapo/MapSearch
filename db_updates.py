@@ -321,7 +321,6 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
         return (sx - min_x) * scale, (sy - min_y) * scale
 
     img = Image.new("RGBA", (img_w, img_h), (255, 255, 255, 255))
-    draw = ImageDraw.Draw(img, "RGBA")
     img_px = img.load()
     z_buffer = [float("-inf")] * (img_w * img_h)
 
@@ -459,9 +458,8 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
 def generate_topshot(map_rel: str) -> None:
     """
     Generate a top-down overview image for the given map and save it to
-    topshot_path.  Uses BSP culling (sky, nodraw, hint, clip, skip) and
-    slope-aware height-based grey shading with painter's algorithm for depth
-    ordering.
+    topshot_path. Uses BSP culling (sky, nodraw, hint, clip, skip), slope-aware
+    height-based grey shading, and per-pixel depth testing for opaque surfaces.
     """
     normalized_map_rel = _normalize_map_rel(map_rel)
     bsp_path = _safe_join_under_root(map_path, normalized_map_rel, ".bsp")
