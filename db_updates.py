@@ -302,7 +302,7 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     # Compute world bounding box.
     all_sx = [pt[0] for _, pts, _, _ in polys for pt in pts]
     all_sy = [pt[1] for _, pts, _, _ in polys for pt in pts]
-    all_z  = [z    for z, _, _, _   in polys]
+    all_z = [z for _, _, pts_z, _ in polys for _, _, z in pts_z]
 
     min_x, max_x = min(all_sx), max(all_sx)
     min_y, max_y = min(all_sy), max(all_sy)
@@ -320,11 +320,9 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     def to_px(sx: float, sy: float) -> tuple[float, float]:
         return (sx - min_x) * scale, (sy - min_y) * scale
 
-    # Painter's algorithm: draw back-to-front (lowest Z first).
-    polys.sort(key=lambda p: p[0])
-
     img = Image.new("RGBA", (img_w, img_h), (255, 255, 255, 255))
-    draw = ImageDraw.Draw(img, "RGBA")
+    img_px = img.load()
+    z_buffer = [float("-inf")] * (img_w * img_h)
 
     def _fit_plane_z(points: list[tuple[float, float, float]]) -> tuple[float, float, float] | None:
         # Solve z = a*x + b*y + c from the most numerically stable non-collinear triplet in projected XY.
@@ -363,21 +361,60 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
             return None
         return best
 
-    for avg_z, screen_pts, screen_pts_z, opacity in polys:
+    opaque_polys = [p for p in polys if p[3] >= 1.0]
+    transparent_polys = [p for p in polys if p[3] < 1.0]
+
+    # Opaque pass: per-pixel depth test to avoid painter-order artifacts on overlaps.
+    for avg_z, screen_pts, screen_pts_z, _opacity in opaque_polys:
+        poly_px = [to_px(sx, sy) for sx, sy in screen_pts]
+        if len(poly_px) < 3:
+            continue
+
+        plane = _fit_plane_z(screen_pts_z)
+        min_px = max(0, math.floor(min(x for x, _ in poly_px)))
+        max_px = min(img_w - 1, math.ceil(max(x for x, _ in poly_px)))
+        min_py = max(0, math.floor(min(y for _, y in poly_px)))
+        max_py = min(img_h - 1, math.ceil(max(y for _, y in poly_px)))
+        if min_px > max_px or min_py > max_py:
+            continue
+
+        local_w = max_px - min_px + 1
+        local_h = max_py - min_py + 1
+        local_poly = [(x - min_px, y - min_py) for x, y in poly_px]
+
+        mask = Image.new("L", (local_w, local_h), 0)
+        ImageDraw.Draw(mask).polygon(local_poly, fill=255)
+        mask_px = mask.load()
+
+        a = b = c = 0.0
+        if plane is not None:
+            a, b, c = plane
+        for py in range(local_h):
+            sy = (min_py + py + 0.5) / scale + min_y
+            for px in range(local_w):
+                if mask_px[px, py] == 0:
+                    continue
+                sx = (min_px + px + 0.5) / scale + min_x
+                z = (a * sx + b * sy + c) if plane is not None else avg_z
+                t = (z - min_z) / z_range
+                t = max(0.0, min(1.0, t))
+                shade = int(60 + 170 * t)
+                gx = min_px + px
+                gy = min_py + py
+                idx = gy * img_w + gx
+                if z >= z_buffer[idx]:
+                    z_buffer[idx] = z
+                    img_px[gx, gy] = (shade, shade, shade, 255)
+
+    # Transparent pass: keep painter ordering, but skip fragments behind opaque depth.
+    transparent_polys.sort(key=lambda p: p[0])
+    for avg_z, screen_pts, screen_pts_z, opacity in transparent_polys:
         alpha = int(255 * opacity)
         poly_px = [to_px(sx, sy) for sx, sy in screen_pts]
         if len(poly_px) < 3:
             continue
 
         plane = _fit_plane_z(screen_pts_z)
-        if plane is None:
-            # Degenerate top-down projection (near-vertical in XY): fallback to avg Z.
-            t = (avg_z - min_z) / z_range
-            t = max(0.0, min(1.0, t))
-            shade = int(60 + 170 * t)
-            draw.polygon(poly_px, fill=(shade, shade, shade, alpha))
-            continue
-
         min_px = max(0, math.floor(min(x for x, _ in poly_px)))
         max_px = min(img_w - 1, math.ceil(max(x for x, _ in poly_px)))
         min_py = max(0, math.floor(min(y for _, y in poly_px)))
@@ -395,14 +432,20 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
 
         tile = Image.new("RGBA", (local_w, local_h), (0, 0, 0, 0))
         tile_px = tile.load()
-        a, b, c = plane
+        a = b = c = 0.0
+        if plane is not None:
+            a, b, c = plane
         for py in range(local_h):
             sy = (min_py + py + 0.5) / scale + min_y
             for px in range(local_w):
                 if mask_px[px, py] == 0:
                     continue
                 sx = (min_px + px + 0.5) / scale + min_x
-                z = a * sx + b * sy + c
+                z = (a * sx + b * sy + c) if plane is not None else avg_z
+                gx = min_px + px
+                gy = min_py + py
+                if z < z_buffer[gy * img_w + gx]:
+                    continue
                 t = (z - min_z) / z_range
                 t = max(0.0, min(1.0, t))
                 shade = int(60 + 170 * t)
@@ -415,9 +458,8 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
 def generate_topshot(map_rel: str) -> None:
     """
     Generate a top-down overview image for the given map and save it to
-    topshot_path.  Uses BSP culling (sky, nodraw, hint, clip, skip) and
-    slope-aware height-based grey shading with painter's algorithm for depth
-    ordering.
+    topshot_path. Uses BSP culling (sky, nodraw, hint, clip, skip), slope-aware
+    height-based grey shading, and per-pixel depth testing for opaque surfaces.
     """
     normalized_map_rel = _normalize_map_rel(map_rel)
     bsp_path = _safe_join_under_root(map_path, normalized_map_rel, ".bsp")
