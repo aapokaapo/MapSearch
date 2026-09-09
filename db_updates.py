@@ -1,6 +1,7 @@
 import codecs
 import os
 import sys
+from functools import lru_cache
 
 from sqlmodel import Session, select
 
@@ -139,6 +140,9 @@ _SURF_TRANS33 = 0x0010
 _SURF_TRANS66 = 0x0020
 _SURF_NODRAW = 0x0080
 _CULLED_TEXTURE_NAMES = {"sky", "hint", "clip", "skip"}
+_TS_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp", "tga", "pcx")
+_TS_WAL_HEADER_SIZE = 100
+_TS_WAL_MAX_DIMENSION = 4096
 
 
 def _ts_bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
@@ -222,6 +226,112 @@ def _ts_parse_bsp(bsp_path: str) -> dict:
             "faces": faces, "tex_infos": tex_infos}
 
 
+@lru_cache(maxsize=1)
+def _ts_load_q2_palette() -> list[int]:
+    from PIL import Image
+
+    pball_root = os.path.realpath(pball_path.rstrip("/"))
+    colormap_path = os.path.realpath(os.path.join(pball_root, "pics", "colormap.pcx"))
+    if not colormap_path.startswith(pball_root + os.sep) or not os.path.isfile(colormap_path):
+        raise FileNotFoundError("Missing Quake2 colormap.pcx palette file")
+
+    with Image.open(colormap_path) as img:
+        palette = img.getpalette()
+    if not palette or len(palette) < 768:
+        raise ValueError("Invalid Quake2 palette in colormap.pcx")
+    return palette[:768]
+
+
+def _ts_decode_wal_to_rgba(wal_path: str) -> "Image.Image":
+    import struct
+    from PIL import Image
+
+    with open(wal_path, "rb") as f:
+        wal_data = f.read()
+    if len(wal_data) < _TS_WAL_HEADER_SIZE:
+        raise ValueError("Invalid WAL texture header")
+
+    _, width, height, off0, _, _, _, _, _, _, _ = struct.unpack_from("<32s6I32s3i", wal_data, 0)
+    if width <= 0 or height <= 0 or width > _TS_WAL_MAX_DIMENSION or height > _TS_WAL_MAX_DIMENSION:
+        raise ValueError("Invalid WAL texture dimensions")
+
+    pixel_count = width * height
+    if off0 <= 0 or off0 + pixel_count > len(wal_data):
+        raise ValueError("Invalid WAL texture pixel data")
+
+    indices = wal_data[off0:off0 + pixel_count]
+    indexed = Image.frombytes("P", (width, height), indices)
+    indexed.putpalette(_ts_load_q2_palette())
+
+    rgba = indexed.convert("RGBA")
+    if b"\xff" in indices:
+        alpha = indexed.point(lambda p: 0 if p == 255 else 255, mode="L")
+        rgba.putalpha(alpha)
+    return rgba
+
+
+def _ts_average_rgba_color(img: "Image.Image") -> tuple[int, int, int] | None:
+    from PIL import ImageStat
+
+    rgba = img.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    if alpha.getbbox() is None:
+        return None
+    mask = alpha.point(lambda a: 255 if a else 0, mode="L")
+    stats = ImageStat.Stat(rgba, mask=mask)
+    count = stats.count[0] if stats.count else 0
+    if not count:
+        return None
+    return tuple(int(round(channel)) for channel in stats.mean[:3])
+
+
+@lru_cache(maxsize=1024)
+def _ts_average_texture_color(texture_name: str) -> tuple[int, int, int] | None:
+    from PIL import Image
+
+    texture_rel = texture_name.strip("/").replace("\\", "/")
+    if not texture_rel:
+        return None
+
+    pball_root = os.path.realpath(pball_path.rstrip("/"))
+    textures_root = os.path.realpath(os.path.join(pball_root, "textures"))
+    tex_dir, tex_base = os.path.split(texture_rel)
+    candidates = []
+    if tex_dir:
+        for ext in _TS_TEXTURE_EXTS:
+            candidates.append(os.path.join(textures_root, tex_dir, "hr4", f"{tex_base}.{ext}"))
+        candidates.append(os.path.join(textures_root, tex_dir, "hr4", f"{tex_base}.wal"))
+    for ext in _TS_TEXTURE_EXTS:
+        candidates.append(os.path.join(textures_root, f"{texture_rel}.{ext}"))
+    candidates.append(os.path.join(textures_root, f"{texture_rel}.wal"))
+
+    for candidate in candidates:
+        texture_path = os.path.realpath(candidate)
+        if not texture_path.startswith(textures_root + os.sep) or not os.path.isfile(texture_path):
+            continue
+        if texture_path.lower().endswith(".wal"):
+            return _ts_average_rgba_color(_ts_decode_wal_to_rgba(texture_path))
+        with Image.open(texture_path) as img:
+            return _ts_average_rgba_color(img)
+    return None
+
+
+def _ts_apply_shading(
+    texture_color: tuple[int, int, int] | None,
+    z: float,
+    min_z: float,
+    z_range: float,
+) -> tuple[int, int, int]:
+    t = (z - min_z) / z_range
+    t = max(0.0, min(1.0, t))
+    shade = int(60 + 170 * t)
+    if texture_color is None:
+        return (shade, shade, shade)
+
+    shade_offset = shade - 145
+    return tuple(max(0, min(255, channel + shade_offset)) for channel in texture_color)
+
+
 
 def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image.Image":
     """
@@ -251,7 +361,7 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     # Collect all visible polygons with their screen-space data.
     # Top-down projection: screen_x = BSP_x, screen_y = -BSP_y, depth = BSP_z
     # (negating Y so the image Y axis increases downward as in screen space).
-    polys: list[tuple] = []  # (avg_z, screen_pts, screen_pts_z, opacity)
+    polys: list[tuple] = []  # (avg_z, screen_pts, screen_pts_z, opacity, texture_color)
 
     for first_edge, num_edges, texinfo_idx in faces:
         if num_edges < 3 or texinfo_idx < 0 or texinfo_idx >= len(tex_infos):
@@ -295,14 +405,15 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
         avg_z = sum(z_list) / len(z_list)
         screen_pts = list(zip(sx_list, sy_list))
         screen_pts_z = list(zip(sx_list, sy_list, z_list))
-        polys.append((avg_z, screen_pts, screen_pts_z, opacity))
+        texture_color = _ts_average_texture_color(texture_name)
+        polys.append((avg_z, screen_pts, screen_pts_z, opacity, texture_color))
     if not polys:
         return Image.new("RGBA", (max_resolution, max_resolution), (255, 255, 255, 255))
 
     # Compute world bounding box.
-    all_sx = [pt[0] for _, pts, _, _ in polys for pt in pts]
-    all_sy = [pt[1] for _, pts, _, _ in polys for pt in pts]
-    all_z = [z for _, _, pts_z, _ in polys for _, _, z in pts_z]
+    all_sx = [pt[0] for _, pts, _, _, _ in polys for pt in pts]
+    all_sy = [pt[1] for _, pts, _, _, _ in polys for pt in pts]
+    all_z = [z for _, _, pts_z, _, _ in polys for _, _, z in pts_z]
 
     min_x, max_x = min(all_sx), max(all_sx)
     min_y, max_y = min(all_sy), max(all_sy)
@@ -365,7 +476,7 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     transparent_polys = [p for p in polys if p[3] < 1.0]
 
     # Opaque pass: per-pixel depth test to avoid painter-order artifacts on overlaps.
-    for avg_z, screen_pts, screen_pts_z, _opacity in opaque_polys:
+    for avg_z, screen_pts, screen_pts_z, _opacity, texture_color in opaque_polys:
         poly_px = [to_px(sx, sy) for sx, sy in screen_pts]
         if len(poly_px) < 3:
             continue
@@ -396,19 +507,16 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
                     continue
                 sx = (min_px + px + 0.5) / scale + min_x
                 z = (a * sx + b * sy + c) if plane is not None else avg_z
-                t = (z - min_z) / z_range
-                t = max(0.0, min(1.0, t))
-                shade = int(60 + 170 * t)
                 gx = min_px + px
                 gy = min_py + py
                 idx = gy * img_w + gx
                 if z >= z_buffer[idx]:
                     z_buffer[idx] = z
-                    img_px[gx, gy] = (shade, shade, shade, 255)
+                    img_px[gx, gy] = (*_ts_apply_shading(texture_color, z, min_z, z_range), 255)
 
     # Transparent pass: keep painter ordering, but skip fragments behind opaque depth.
     transparent_polys.sort(key=lambda p: p[0])
-    for avg_z, screen_pts, screen_pts_z, opacity in transparent_polys:
+    for avg_z, screen_pts, screen_pts_z, opacity, texture_color in transparent_polys:
         alpha = int(255 * opacity)
         poly_px = [to_px(sx, sy) for sx, sy in screen_pts]
         if len(poly_px) < 3:
@@ -446,10 +554,7 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
                 gy = min_py + py
                 if z < z_buffer[gy * img_w + gx]:
                     continue
-                t = (z - min_z) / z_range
-                t = max(0.0, min(1.0, t))
-                shade = int(60 + 170 * t)
-                tile_px[px, py] = (shade, shade, shade, alpha)
+                tile_px[px, py] = (*_ts_apply_shading(texture_color, z, min_z, z_range), alpha)
         img.alpha_composite(tile, dest=(min_px, min_py))
 
     return img
