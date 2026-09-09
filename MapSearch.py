@@ -449,7 +449,7 @@ async def regenerate_topshot(
 
         target_maps = [target_map_rel]
 
-    semaphore = asyncio.Semaphore(4)
+    semaphore = asyncio.Semaphore(1)
 
     async def _regenerate_one(target_map: str) -> tuple[str | None, str | None]:
         async with semaphore:
