@@ -76,14 +76,23 @@ async def print_map_info(keyword: str, session: Session, already_seen: deque, ct
     await send(ctx, embed=embed)
 
 
-def _get_random_map(already_seen: deque, session: Session, prefix: str = None) -> str:
-    """Return a random map_path not recently seen, optionally filtered by path prefix."""
+def _is_random_map_allowed(map_path: str) -> bool:
+    """Allow random map picks only from maps/ root or maps/beta/."""
+    return "/" not in map_path or map_path.startswith("beta/")
+
+
+def _get_random_map(already_seen: deque, session: Session, prefix: str = None) -> str | None:
+    """Return a random eligible map_path not recently seen, optionally filtered by path prefix."""
     if prefix:
         maps = session.exec(
             select(Map.map_path).where(Map.map_path.like(f"{prefix}%"))
         ).all()
     else:
         maps = session.exec(select(Map.map_path)).all()
+
+    maps = [m for m in maps if _is_random_map_allowed(m)]
+    if not maps:
+        return None
 
     unseen = [m for m in maps if m not in already_seen]
     if not unseen:
