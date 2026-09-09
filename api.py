@@ -287,7 +287,7 @@ def _collect_map_files(bsp_file: str, map_rel: str, pball: str):
 
     # Sky box faces.
     if sky:
-        for suffix in ("bk", "dn", "ft", "lf", "rt", "up"):
+        for suffix in _QUAKE2_SKY_SUFFIX_ORDER:
             for ext in ("pcx", "tga", "png", "jpg"):
                 _add(
                     os.path.join(pball, "env", sky + suffix + "." + ext),
@@ -407,6 +407,8 @@ _CULLED_TEXTURE_NAMES = {"sky", "hint", "clip", "skip"}
 _BROWSER_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp")
 _BROWSER_SKYBOX_EXTS = ("png", "jpg", "jpeg", "webp")
 _OBJ_UV_SCALE = 256.0  # default texel-to-UV divisor for OBJ export (no image size available)
+_QUAKE2_SKY_SUFFIX_ORDER = ("rt", "bk", "lf", "ft", "up", "dn")
+_THREEJS_SKYBOX_INDEX_ORDER = (0, 2, 4, 5, 3, 1)
 _TRANSPARENT_BRUSH_ENTITY_KEYS = ("classname", "targetname", "name")
 _TRANSPARENT_BRUSH_ENTITY_TOKENS = ("hill", "base")
 _TRANSPARENT_BRUSH_OPACITY = 0.4
@@ -503,14 +505,12 @@ def _resolve_skybox_urls(sky_name: str) -> list[str] | None:
     if not env_root.startswith(pball_root + os.sep) or not os.path.isdir(env_root):
         return None
 
-    # Three.js CubeTextureLoader order: +X, -X, +Y, -Y, +Z, -Z
-    suffix_order = ("rt", "lf", "up", "dn", "ft", "bk")
     sky_base = sky_name.strip("/").replace("\\", "/")
     if not sky_base:
         return None
 
-    urls: list[str] = []
-    for suffix in suffix_order:
+    quake2_urls: list[str] = []
+    for suffix in _QUAKE2_SKY_SUFFIX_ORDER:
         selected_url = None
         for ext in _BROWSER_SKYBOX_EXTS:
             filename = f"{sky_base}{suffix}.{ext}"
@@ -522,8 +522,13 @@ def _resolve_skybox_urls(sky_name: str) -> list[str] | None:
                 break
         if not selected_url:
             return None
-        urls.append(selected_url)
-    return urls
+        quake2_urls.append(selected_url)
+
+    # Quake II loads sky faces as rt, bk, lf, ft, up, dn. The viewer converts
+    # BSP geometry from Quake coordinates to Three.js as (x, z, -y), so remap
+    # that native face order to Three.js CubeTextureLoader order:
+    # +X, -X, +Y, -Y, +Z, -Z.
+    return [quake2_urls[idx] for idx in _THREEJS_SKYBOX_INDEX_ORDER]
 
 
 def _transparent_brush_face_indices(
