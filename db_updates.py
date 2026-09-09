@@ -682,15 +682,26 @@ def request_topshot_via_api(map_rel: str) -> None:
     /api/export-bsp endpoint.  This delegates image generation to the API
     process, which has the required dependencies available.
     """
+    import socket
+    import urllib.error
     import urllib.request
     import urllib.parse
     from config import base_url
 
     url = base_url + "/api/export-bsp?" + urllib.parse.urlencode({"map_name": map_rel})
-    try:
-        req = urllib.request.Request(url, method="POST")
-        with urllib.request.urlopen(req, timeout=30):
-            pass
-    except Exception as e:
-        print(f"request_topshot_via_api: failed for {map_rel}: {e}")
-        raise
+    req = urllib.request.Request(url, method="POST")
+    timeout_seconds = 180
+    max_attempts = 3
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_seconds):
+                return
+        except Exception as e:
+            is_timeout = isinstance(e, (TimeoutError, socket.timeout))
+            if isinstance(e, urllib.error.URLError) and isinstance(e.reason, socket.timeout):
+                is_timeout = True
+            if is_timeout and attempt < max_attempts:
+                continue
+            print(f"request_topshot_via_api: failed for {map_rel}: {e}")
+            raise
