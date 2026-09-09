@@ -28,6 +28,14 @@ def _safe_join_under_root(root: str, map_rel: str, suffix: str) -> str:
     return candidate
 
 
+def _ts_trusted_bsp_path(bsp_path: str) -> str:
+    maps_root = os.path.realpath(map_path)
+    candidate_real = os.path.realpath(bsp_path)
+    if not candidate_real.startswith(maps_root + os.sep) or not candidate_real.lower().endswith(".bsp"):
+        raise ValueError(f"Invalid BSP path: {bsp_path}")
+    return candidate_real
+
+
 def resolve_map_rel(map_ref: str, session: Session | None = None) -> str:
     """
     Resolve a map reference to the canonical path stored under maps/.
@@ -195,7 +203,8 @@ def _ts_resolve_face_indices(
 
 def _ts_parse_bsp(bsp_path: str) -> dict:
     import struct
-    with open(bsp_path, "rb") as f:
+    trusted_bsp_path = _ts_trusted_bsp_path(bsp_path)
+    with open(trusted_bsp_path, "rb") as f:
         data = f.read()
     if data[:4] != b"IBSP":
         raise ValueError("Unsupported BSP format")
@@ -232,7 +241,8 @@ def _ts_parse_bsp(bsp_path: str) -> dict:
 def _ts_vertex_projected_span(bsp_path: str) -> float:
     import struct
 
-    with open(bsp_path, "rb") as f:
+    trusted_bsp_path = _ts_trusted_bsp_path(bsp_path)
+    with open(trusted_bsp_path, "rb") as f:
         data = f.read()
     if data[:4] != b"IBSP":
         raise ValueError("Unsupported BSP format")
