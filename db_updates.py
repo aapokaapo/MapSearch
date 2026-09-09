@@ -343,10 +343,10 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
     are culled via the 2-D signed area of their projection (FrontSide); transparent
     surfaces are rendered from both sides (DoubleSide).  Painter's algorithm
     (back-to-front by Z elevation) handles depth ordering.  Polygon color is
-    slope-aware: for non-degenerate XY projections, height is evaluated per
-    pixel from the polygon plane to create a smooth grey gradient (dark = low,
-    light = high).  Degenerate projections fall back to average-Z shading.
-    Returns a PIL RGBA image.
+    tinted with the average resolved texture color and remains slope-aware: for
+    non-degenerate XY projections, height is evaluated per pixel from the polygon
+    plane to brighten or darken the texture tint.  Degenerate projections fall
+    back to average-Z shading.  Returns a PIL RGBA image.
     """
     import math
     from PIL import Image, ImageDraw
@@ -563,8 +563,8 @@ def _render_topshot_topdown(bsp_path: str, max_resolution: int = 1024) -> "Image
 def generate_topshot(map_rel: str) -> None:
     """
     Generate a top-down overview image for the given map and save it to
-    topshot_path. Uses BSP culling (sky, nodraw, hint, clip, skip), slope-aware
-    height-based grey shading, and per-pixel depth testing for opaque surfaces.
+    topshot_path. Uses BSP culling (sky, nodraw, hint, clip, skip), texture-aware
+    height shading, and per-pixel depth testing for opaque surfaces.
     """
     normalized_map_rel = _normalize_map_rel(map_rel)
     bsp_path = _safe_join_under_root(map_path, normalized_map_rel, ".bsp")
