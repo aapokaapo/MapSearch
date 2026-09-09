@@ -143,6 +143,9 @@ _CULLED_TEXTURE_NAMES = {"sky", "hint", "clip", "skip"}
 _TS_TEXTURE_EXTS = ("png", "jpg", "jpeg", "webp", "tga", "pcx")
 _TS_WAL_HEADER_SIZE = 100
 _TS_WAL_MAX_DIMENSION = 4096
+_TOPSHOT_BASE_RESOLUTION = 1024
+_TOPSHOT_MIN_RESOLUTION = 256
+_TOPSHOT_MAX_RESOLUTION = 4096
 
 
 def _ts_bsp_lump(data: bytes, idx: int) -> tuple[int, int]:
@@ -224,6 +227,88 @@ def _ts_parse_bsp(bsp_path: str) -> dict:
         faces.append((first_edge, num_edges, texinfo_idx))
     return {"vertices": vertices, "edges": edges, "face_edges": face_edges,
             "faces": faces, "tex_infos": tex_infos}
+
+
+def _ts_vertex_projected_span(bsp_path: str) -> float:
+    import struct
+
+    with open(bsp_path, "rb") as f:
+        data = f.read()
+    if data[:4] != b"IBSP":
+        raise ValueError("Unsupported BSP format")
+
+    vert_off, vert_len = _ts_bsp_lump(data, 2)
+    if not vert_len:
+        raise ValueError("Missing BSP vertex lump")
+    if vert_len % 12:
+        raise ValueError("Corrupt BSP vertex lump size")
+
+    min_x = max_x = min_y = max_y = None
+    for i in range(vert_len // 12):
+        x, y, _z = struct.unpack_from("<fff", data, vert_off + i * 12)
+        if min_x is None:
+            min_x = max_x = x
+            min_y = max_y = y
+            continue
+        min_x = min(min_x, x)
+        max_x = max(max_x, x)
+        min_y = min(min_y, y)
+        max_y = max(max_y, y)
+
+    if min_x is None or min_y is None or max_x is None or max_y is None:
+        return 1.0
+    return max(max_x - min_x, max_y - min_y, 1.0)
+
+
+def _ts_bsp_inventory_signature() -> tuple[tuple[str, int, int], ...]:
+    signature: list[tuple[str, int, int]] = []
+    if not os.path.isdir(map_path):
+        return ()
+
+    for root, _dirs, files in os.walk(map_path):
+        for name in files:
+            if not name.lower().endswith(".bsp"):
+                continue
+            bsp_path = os.path.join(root, name)
+            try:
+                stat = os.stat(bsp_path)
+            except OSError:
+                continue
+            signature.append((bsp_path, stat.st_mtime_ns, stat.st_size))
+
+    signature.sort()
+    return tuple(signature)
+
+
+@lru_cache(maxsize=4)
+def _ts_average_projected_span(bsp_signature: tuple[tuple[str, int, int], ...]) -> float | None:
+    if not bsp_signature:
+        return None
+
+    spans = []
+    for bsp_path, _mtime_ns, _size in bsp_signature:
+        try:
+            spans.append(_ts_vertex_projected_span(bsp_path))
+        except (OSError, ValueError):
+            continue
+
+    if not spans:
+        return None
+    return sum(spans) / len(spans)
+
+
+def _ts_dynamic_max_resolution(bsp_path: str) -> int:
+    try:
+        map_span = _ts_vertex_projected_span(bsp_path)
+    except (OSError, ValueError):
+        return _TOPSHOT_BASE_RESOLUTION
+
+    avg_span = _ts_average_projected_span(_ts_bsp_inventory_signature())
+    if not avg_span or avg_span <= 0:
+        return _TOPSHOT_BASE_RESOLUTION
+
+    scaled_resolution = int(round(_TOPSHOT_BASE_RESOLUTION * (map_span / avg_span)))
+    return max(_TOPSHOT_MIN_RESOLUTION, min(_TOPSHOT_MAX_RESOLUTION, scaled_resolution))
 
 
 @lru_cache(maxsize=1)
@@ -564,7 +649,8 @@ def generate_topshot(map_rel: str) -> None:
     """
     Generate a top-down overview image for the given map and save it to
     topshot_path. Uses BSP culling (sky, nodraw, hint, clip, skip), texture-aware
-    height shading, and per-pixel depth testing for opaque surfaces.
+    height shading, per-pixel depth testing for opaque surfaces, and scales the
+    output resolution with map size around a 1024px average.
     """
     normalized_map_rel = _normalize_map_rel(map_rel)
     bsp_path = _safe_join_under_root(map_path, normalized_map_rel, ".bsp")
@@ -576,7 +662,7 @@ def generate_topshot(map_rel: str) -> None:
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
-    img = _render_topshot_topdown(bsp_path, max_resolution=1024)
+    img = _render_topshot_topdown(bsp_path, max_resolution=_ts_dynamic_max_resolution(bsp_path))
     img.convert("RGB").save(out_path, "JPEG", quality=75, optimize=True)
 
 
