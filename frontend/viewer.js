@@ -166,12 +166,12 @@ function loadTexture(loader, url) {
 
 function loadCubeTexture(urls) {
   const flipByFaceIndex = [
-    { x: false, y: false }, // +X
-    { x: false, y: false }, // -X
+    { x: false, y: true },  // +X
+    { x: false, y: true },  // -X
     { x: false, y: true },  // +Y
     { x: false, y: true },  // -Y
-    { x: false, y: false }, // +Z
-    { x: false, y: false }, // -Z
+    { x: false, y: true },  // +Z
+    { x: false, y: true },  // -Z
   ];
   return Promise.all(urls.map((url) => loadImage(url))).then((images) => {
     if (images.some((image) => !image)) return null;
