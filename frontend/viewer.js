@@ -165,9 +165,49 @@ function loadTexture(loader, url) {
 }
 
 function loadCubeTexture(urls) {
+  const flipByFaceIndex = [
+    { x: false, y: false }, // +X
+    { x: false, y: false }, // -X
+    { x: false, y: true },  // +Y
+    { x: false, y: true },  // -Y
+    { x: false, y: false }, // +Z
+    { x: false, y: false }, // -Z
+  ];
+  return Promise.all(urls.map((url) => loadImage(url))).then((images) => {
+    if (images.some((image) => !image)) return null;
+    const faceImages = images.map((image, idx) => {
+      const flip = flipByFaceIndex[idx] || { x: false, y: false };
+      return flipCubeFaceImage(image, flip.x, flip.y);
+    });
+    const cubeTexture = new THREE.CubeTexture(faceImages);
+    cubeTexture.encoding = THREE.sRGBEncoding;
+    cubeTexture.needsUpdate = true;
+    return cubeTexture;
+  }).catch(() => null);
+}
+
+function loadImage(url) {
   return new Promise((resolve) => {
-    new THREE.CubeTextureLoader().load(urls, resolve, undefined, () => resolve(null));
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = url;
   });
+}
+
+function flipCubeFaceImage(image, flipX, flipY) {
+  if (!flipX && !flipY) return image;
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return image;
+  ctx.save();
+  ctx.translate(flipX ? canvas.width : 0, flipY ? canvas.height : 0);
+  ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+  ctx.drawImage(image, 0, 0);
+  ctx.restore();
+  return canvas;
 }
 
 function hashColor(text) {
